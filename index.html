@@ -1,0 +1,1925 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>长上下文的Transformer O(n²) 诅咒及其破局之道：从稀疏注意力到Mamba原理解读</title>
+    <script>
+        MathJax = {
+            tex: {
+                inlineMath: [['$', '$'], ['\\(', '\\)']],
+                displayMath: [['$$', '$$'], ['\\[', '\\]']]
+            },
+            svg: { fontCache: 'global' },
+            options: { enableMenu: false }
+        };
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" id="MathJax-script" async></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+            background: #f7f9fc; color: #1e293b; line-height: 1.7; padding: 20px;
+        }
+        .container {
+            max-width: 1000px; margin: 0 auto; background: #ffffff;
+            border-radius: 24px; padding: 48px 56px; box-shadow: 0 20px 60px rgba(0,0,0,0.06);
+        }
+        @media (max-width: 640px) {
+            .container { padding: 24px 18px; border-radius: 16px; }
+            body { padding: 10px; }
+        }
+        h1 {
+            font-size: 2.4rem; font-weight: 700; letter-spacing: -0.02em;
+            background: linear-gradient(135deg, #0f172a 0%, #3b82f6 100%);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+            margin-bottom: 0.3em; line-height: 1.2;
+        }
+        h2 { font-size: 1.8rem; font-weight: 600; margin-top: 2.2em; margin-bottom: 0.6em; padding-bottom: 0.3em; border-bottom: 3px solid #e2e8f0; color: #0f172a; }
+        h3 { font-size: 1.35rem; font-weight: 600; margin-top: 1.8em; margin-bottom: 0.5em; color: #1e293b; }
+        h4 { font-size: 1.1rem; font-weight: 600; margin-top: 1.4em; margin-bottom: 0.4em; color: #334155; }
+        p { margin-bottom: 1em; }
+        strong { color: #0f172a; font-weight: 600; }
+        em { font-style: italic; color: #475569; }
+        a { color: #2563eb; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        blockquote {
+            border-left: 4px solid #3b82f6; padding: 0.8em 1.4em; margin: 1.2em 0;
+            background: #f8fafc; border-radius: 0 8px 8px 0; color: #1e293b;
+        }
+        blockquote p { margin-bottom: 0.4em; }
+        blockquote p:last-child { margin-bottom: 0; }
+        pre {
+            background: #0f172a; color: #e2e8f0; padding: 16px 20px; border-radius: 12px;
+            overflow-x: auto; font-size: 0.9rem; line-height: 1.6; margin: 1.2em 0;
+            font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+        }
+        pre code { background: transparent; color: inherit; padding: 0; font-size: inherit; }
+        code {
+            background: #f1f5f9; padding: 0.1em 0.5em; border-radius: 4px; font-size: 0.9em;
+            font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace; color: #0f172a;
+        }
+        .table-wrap { overflow-x: auto; margin: 1.4em 0; border-radius: 12px; border: 1px solid #e2e8f0; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.92rem; min-width: 500px; }
+        table th { background: #f1f5f9; font-weight: 600; text-align: left; padding: 12px 16px; border-bottom: 2px solid #cbd5e1; color: #0f172a; }
+        table td { padding: 12px 16px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
+        table tr:last-child td { border-bottom: none; }
+        table tr:hover { background: #f8fafc; }
+        .card-note { background: #f0f7ff; border-radius: 12px; padding: 16px 20px; margin: 1.2em 0; border-left: 4px solid #3b82f6; }
+        .card-example { background: #fef9e7; border-radius: 12px; padding: 16px 20px; margin: 1.2em 0; border-left: 4px solid #f59e0b; }
+        .card-metaphor { background: #ecfdf5; border-radius: 12px; padding: 16px 20px; margin: 1.2em 0; border-left: 4px solid #10b981; }
+        .card-check { background: #f5f3ff; border-radius: 12px; padding: 16px 20px; margin: 1.2em 0; border-left: 4px solid #8b5cf6; }
+        .card-tip { background: #fff7ed; border-radius: 12px; padding: 16px 20px; margin: 1.2em 0; border-left: 4px solid #f97316; }
+        .card-summary { background: #f1f5f9; border-radius: 12px; padding: 16px 20px; margin: 1.2em 0; border-left: 4px solid #64748b; }
+        .card-important { background: #fef2f2; border-radius: 12px; padding: 16px 20px; margin: 1.2em 0; border-left: 4px solid #ef4444; }
+        .card-title { font-weight: 700; margin-bottom: 0.4em; display: block; }
+        .timeline { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px 8px; padding: 20px 10px; margin: 1.5em 0; background: #f8fafc; border-radius: 16px; border: 1px solid #e2e8f0; font-size: 0.85rem; }
+        .timeline-item { display: flex; align-items: center; gap: 4px; background: #fff; padding: 4px 12px; border-radius: 20px; border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.04); white-space: nowrap; }
+        .timeline-item .year { font-weight: 700; color: #2563eb; }
+        .timeline-item .label { font-weight: 500; }
+        .timeline-arrow { color: #94a3b8; font-size: 1.2rem; font-weight: 300; }
+        .timeline-desc { width: 100%; text-align: center; font-size: 0.85rem; color: #475569; margin-top: 8px; padding: 8px 0 0; border-top: 1px dashed #d1d5db; }
+        ul, ol { padding-left: 1.8em; margin: 0.8em 0 1.2em; }
+        li { margin-bottom: 0.3em; }
+        .math-block { text-align: center; padding: 0.8em 0; margin: 0.8em 0; font-size: 1.05rem; overflow-x: auto; }
+        .hr-divider { border: none; height: 2px; background: linear-gradient(to right, transparent, #cbd5e1, transparent); margin: 2.4em 0; }
+        .small-text { font-size: 0.88rem; color: #475569; }
+        .highlight { background: #fef9c3; padding: 0.05em 0.3em; border-radius: 4px; }
+        .decision-tree {
+            background: #f8fafc; border-radius: 16px; padding: 20px 24px; margin: 1.2em 0;
+            border: 1px solid #e2e8f0; font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+            font-size: 0.92rem; line-height: 1.8; white-space: pre-wrap; word-break: break-word;
+        }
+        .chapter-num { display: inline-block; background: #2563eb; color: #fff; font-weight: 700; font-size: 0.8rem; padding: 0.1em 0.8em; border-radius: 30px; margin-right: 8px; }
+        @media (max-width: 640px) {
+            table { font-size: 0.82rem; min-width: 0; }
+            table th, table td { padding: 8px 10px; }
+            .decision-tree { font-size: 0.8rem; padding: 14px 16px; }
+        }
+
+        /* ========== 阅读模式切换 ========== */
+        .reading-mode-bar {
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            background: rgba(255,255,255,0.92);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-bottom: 1px solid #e2e8f0;
+            margin: -48px -56px 32px;
+            padding: 12px 56px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .reading-mode-label {
+            font-size: 0.88rem;
+            font-weight: 600;
+            color: #475569;
+        }
+        .reading-mode-tabs {
+            display: flex;
+            gap: 4px;
+            background: #f1f5f9;
+            border-radius: 10px;
+            padding: 4px;
+        }
+        .reading-mode-tab {
+            padding: 6px 16px;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: #64748b;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            border: none;
+            background: transparent;
+        }
+        .reading-mode-tab:hover { color: #334155; }
+        .reading-mode-tab.active {
+            background: #fff;
+            color: #2563eb;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+            font-weight: 600;
+        }
+        .reading-mode-tab .mode-icon { margin-right: 4px; }
+
+        /* 三级阅读模式内容显隐 */
+        /* 速读模式: 只保留标题、总结、关键表格 */
+        body.mode-speed h4 { display: none !important; }
+        body.mode-speed .card-example { display: none !important; }
+        body.mode-speed .card-note { display: none !important; }
+        body.mode-speed .card-metaphor { display: none !important; }
+        body.mode-speed .card-tip { display: none !important; }
+        body.mode-speed .card-check { display: none !important; }
+        body.mode-speed .code-collapse { display: none !important; }
+        body.mode-speed .math-block { display: none !important; }
+        body.mode-speed .depth-medium { display: none !important; }
+        body.mode-speed .depth-deep { display: none !important; }
+
+        /* 精读模式: 隐藏深度内容（代码、自检题、详细推导） */
+        body.mode-medium .card-check { display: none !important; }
+        body.mode-medium .code-collapse { display: none !important; }
+        body.mode-medium .depth-deep { display: none !important; }
+
+        /* 深度模式: 显示全部 */
+
+        /* ========== O(n²) 计算器 ========== */
+        .calc-widget {
+            background: linear-gradient(135deg, #f0f7ff 0%, #f5f3ff 100%);
+            border-radius: 16px;
+            padding: 24px 28px;
+            margin: 1.8em 0;
+            border: 1px solid #e0e7ff;
+        }
+        .calc-title {
+            font-size: 1.05rem;
+            font-weight: 700;
+            color: #0f172a;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .calc-slider-row {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+        .calc-slider-label {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: #334155;
+            white-space: nowrap;
+            min-width: 90px;
+        }
+        .calc-slider {
+            flex: 1;
+            -webkit-appearance: none;
+            appearance: none;
+            height: 8px;
+            border-radius: 4px;
+            background: #e2e8f0;
+            outline: none;
+        }
+        .calc-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(59,130,246,0.4);
+            transition: transform 0.15s ease;
+        }
+        .calc-slider::-webkit-slider-thumb:hover { transform: scale(1.15); }
+        .calc-slider::-moz-range-thumb {
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+            cursor: pointer;
+            border: none;
+            box-shadow: 0 2px 8px rgba(59,130,246,0.4);
+        }
+        .calc-value {
+            font-size: 1rem;
+            font-weight: 700;
+            color: #2563eb;
+            min-width: 70px;
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+        }
+        .calc-results {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+        }
+        .calc-card {
+            background: #fff;
+            border-radius: 12px;
+            padding: 14px 16px;
+            border: 1px solid #e2e8f0;
+        }
+        .calc-card-label {
+            font-size: 0.78rem;
+            color: #64748b;
+            font-weight: 500;
+            margin-bottom: 4px;
+        }
+        .calc-card-value {
+            font-size: 1.15rem;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+        }
+        .calc-card-transformer .calc-card-value { color: #ef4444; }
+        .calc-card-sparse .calc-card-value { color: #f59e0b; }
+        .calc-card-mamba .calc-card-value { color: #10b981; }
+        .calc-card-sub {
+            font-size: 0.75rem;
+            color: #94a3b8;
+            margin-top: 2px;
+        }
+        @media (max-width: 640px) {
+            .calc-results { grid-template-columns: 1fr; }
+            .calc-widget { padding: 18px 16px; }
+            .reading-mode-bar { margin: -24px -18px 20px; padding: 10px 18px; }
+        }
+
+        /* ========== 可折叠代码块 ========== */
+        .code-collapse {
+            margin: 1.2em 0;
+            border-radius: 12px;
+            border: 1px solid #e2e8f0;
+            overflow: hidden;
+        }
+        .code-collapse-header {
+            background: #f8fafc;
+            padding: 10px 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+            user-select: none;
+            transition: background 0.2s ease;
+        }
+        .code-collapse-header:hover { background: #f1f5f9; }
+        .code-collapse-title {
+            font-size: 0.88rem;
+            font-weight: 600;
+            color: #334155;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .code-collapse-title .lang-badge {
+            background: #e0e7ff;
+            color: #4338ca;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        .code-collapse-toggle {
+            font-size: 0.8rem;
+            color: #64748b;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .code-collapse-body {
+            display: none;
+        }
+        .code-collapse.open .code-collapse-body { display: block; }
+        .code-collapse.open .code-collapse-toggle .arrow { transform: rotate(180deg); }
+        .code-collapse .arrow { transition: transform 0.2s ease; display: inline-block; }
+        .code-collapse pre { margin: 0; border-radius: 0; }
+
+        /* ========== 阅读进度条 ========== */
+        .progress-bar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            height: 3px;
+            background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+            z-index: 1000;
+            transition: width 0.1s ease;
+        }
+    </style>
+</head>
+<body>
+<div class="progress-bar" id="progressBar"></div>
+<div class="container">
+
+<h1>长上下文的Transformer O(n²) 诅咒及其破局之道：从稀疏注意力到Mamba原理解读</h1>
+
+<hr class="hr-divider">
+
+<h2>开篇：为什么 O(n²) 是大模型长上下文的"阿喀琉斯之踵"？</h2>
+
+<p>想象你正在组织一场会议：</p>
+<ul>
+    <li><strong>4 人会议</strong>：每两个人之间需要一次眼神交流，共 6 次。轻松自如。</li>
+    <li><strong>100 人会议</strong>：每两个人之间需要一次眼神交流，共 4,950 次。你开始感到疲惫。</li>
+    <li><strong>10,000 人会议</strong>：眼神交流次数飙升至 49,995,000 次。你的大脑彻底宕机。</li>
+</ul>
+
+<p>Transformer 的自注意力机制，正面临同样的困境。当序列长度从 4K 扩展到 128K 再到 1M 时，计算量和内存占用不是线性增长，而是<strong>平方级爆炸</strong>。这就是 Transformer 架构的 <strong>O(n²) 诅咒</strong>。</p>
+
+<p>本文将带你深入三条主流破局路线的数学内核：它们的核心假设是什么？数学上如何严格降阶？训练时的前向/后向传播具体怎么走？</p>
+
+<div class="calc-widget">
+    <div class="calc-title">🧮 O(n²) 诅咒实时计算器</div>
+    <div class="calc-slider-row">
+        <span class="calc-slider-label">序列长度</span>
+        <input type="range" class="calc-slider" id="seqLenSlider" min="1" max="20" value="12" step="1">
+        <span class="calc-value" id="seqLenValue">4K</span>
+    </div>
+    <div class="calc-results">
+        <div class="calc-card calc-card-transformer">
+            <div class="calc-card-label">标准 Transformer</div>
+            <div class="calc-card-value" id="transMem">33.5 MB</div>
+            <div class="calc-card-sub" id="transOps">1.07G 次运算</div>
+        </div>
+        <div class="calc-card calc-card-sparse">
+            <div class="calc-card-label">稀疏注意力 (w=512)</div>
+            <div class="calc-card-value" id="sparseMem">4.2 MB</div>
+            <div class="calc-card-sub" id="sparseOps">2.1M 次运算</div>
+        </div>
+        <div class="calc-card calc-card-mamba">
+            <div class="calc-card-label">Mamba (N=16)</div>
+            <div class="calc-card-value" id="mambaMem">0.5 MB</div>
+            <div class="calc-card-sub" id="mambaOps">262K 次运算</div>
+        </div>
+    </div>
+</div>
+
+<h3>⏳ 技术演化时间线</h3>
+<div class="timeline">
+    <span class="timeline-item"><span class="year">2017</span> <span class="label">标准 Attention</span></span>
+    <span class="timeline-arrow">→</span>
+    <span class="timeline-item"><span class="year">2019</span> <span class="label">Sparse Transformer</span></span>
+    <span class="timeline-arrow">→</span>
+    <span class="timeline-item"><span class="year">2020</span> <span class="label">Longformer / BigBird</span></span>
+    <span class="timeline-arrow">→</span>
+    <span class="timeline-item"><span class="year">2020</span> <span class="label">Performer (FAVOR+)</span></span>
+    <span class="timeline-arrow">→</span>
+    <span class="timeline-item"><span class="year">2021</span> <span class="label">Linear Attention</span></span>
+    <span class="timeline-arrow">→</span>
+    <span class="timeline-item"><span class="year">2023</span> <span class="label">Mamba (SSM)</span></span>
+    <span class="timeline-arrow">→</span>
+    <span class="timeline-item"><span class="year">2024</span> <span class="label">Jamba (混合架构)</span></span>
+    <div class="timeline-desc">
+        全连接灾难 → 稀疏化 → 结构化稀疏 → 核方法线性化 → 结合律重构 → 状态空间革命 → 混合范式
+    </div>
+</div>
+
+<hr class="hr-divider">
+
+<h2>上篇：O(n²) 诅咒的起源与精确诊断</h2>
+
+<h3>第一章：Self-Attention 的"全连接噩梦"</h3>
+
+<h4>1.1 标准 Attention 的数学解剖</h4>
+
+<p>Transformer 的核心是 Scaled Dot-Product Attention：</p>
+
+<div class="math-block">
+    $$ \text{Attention}(Q, K, V) = \text{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right)V $$
+</div>
+
+<p>其中 $Q, K, V \in \mathbb{R}^{n \times d}$，$n$ 是序列长度，$d$ 是特征维度。</p>
+
+<p><strong>关键瓶颈</strong>：$QK^T$ 这一步，是 $n \times d$ 矩阵与 $d \times n$ 矩阵相乘，结果是一个 $n \times n$ 的<strong>注意力分数矩阵</strong>。</p>
+
+<div class="card-example">
+    <span class="card-title">🔍 手算实例：n=4 时的注意力矩阵</span>
+    <p>假设序列长度 $n=4$，维度 $d=2$：</p>
+    <div class="math-block">
+        $$ Q = K = \begin{pmatrix} 1 & 0 \\ 0 & 1 \\ 1 & 1 \\ 0 & 0 \end{pmatrix} $$
+    </div>
+    <p>计算 $QK^T$（忽略缩放因子）：</p>
+    <div class="math-block">
+        $$ QK^T = \begin{pmatrix} 1 & 0 & 1 & 0 \\ 0 & 1 & 0 & 1 \\ 1 & 1 & 1 & 1 \\ 0 & 0 & 0 & 0 \end{pmatrix} $$
+    </div>
+    <p>这个 $4 \times 4$ 矩阵的每个元素 $(i,j)$ 表示第 $i$ 个 token 对第 $j$ 个 token 的"关注程度"。</p>
+    <p><strong>计算代价</strong>：每个元素需要 $d=2$ 次乘法和 1 次加法，共 $4 \times 4 \times 2 = 32$ 次浮点运算。</p>
+</div>
+
+<h4>1.2 为什么是 O(n²)？——从手算到渐近分析</h4>
+
+<p>将手算实例推广到一般情况：</p>
+<ol>
+    <li><strong>计算 $QK^T$</strong>：$n \times d$ 乘 $d \times n$，得到 $n \times n$ 矩阵。每个元素需要 $d$ 次乘法，总计 <strong>$n^2 \cdot d$</strong> 次运算。</li>
+    <li><strong>Softmax 归一化</strong>：对 $n \times n$ 矩阵的每一行计算 exp 并归一化，总计 <strong>$O(n^2)$</strong>。</li>
+    <li><strong>与 $V$ 相乘</strong>：$n \times n$ 矩阵乘 $n \times d$ 矩阵，总计 <strong>$n^2 \cdot d$</strong> 次运算。</li>
+</ol>
+
+<p>单次 Attention 的总复杂度：$O(n^2 d)$。当 $d$ 固定时，核心瓶颈就是 <strong>$O(n^2)$</strong>。</p>
+
+<div class="card-important">
+    <span class="card-title">"诅咒"的精确量化</span>
+    <p>假设 $d=64$，对比不同序列长度的计算量：</p>
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr><th>序列长度 $n$</th><th>$QK^T$ 元素数</th><th>相对 4K 的倍数</th><th>H100 显存占用（FP16）</th></tr>
+            </thead>
+            <tbody>
+                <tr><td>4K (4096)</td><td>16.8M</td><td>1×</td><td>33.5 MB</td></tr>
+                <tr><td>32K</td><td>1.07B</td><td><strong>64×</strong></td><td>2.1 GB</td></tr>
+                <tr><td>128K</td><td>16.8B</td><td><strong>1024×</strong></td><td>33.5 GB</td></tr>
+                <tr><td>1M</td><td>1.07T</td><td><strong>65536×</strong></td><td>2.1 TB</td></tr>
+            </tbody>
+        </table>
+    </div>
+    <p>注意：这仅仅是<strong>一个注意力头、一层网络、一次前向传播</strong>的显存占用。现代 LLM 有 32~128 个头、数十层。1M 上下文在标准 Attention 下，单张 H100 的 80GB 显存连一层都放不下。</p>
+</div>
+
+<h4>1.3 KV Cache：推理时的"内存吸血鬼"</h4>
+
+<p>训练时的 $O(n^2)$ 是计算诅咒，推理时还有一个更隐蔽的内存诅咒——<strong>KV Cache</strong>。</p>
+
+<p>在自回归生成中，为了避免重复计算，模型会缓存每一层的 Key 和 Value 矩阵。对于长度为 $n$ 的已生成序列：</p>
+<div class="math-block">
+    $$ \text{KV Cache 大小} = 2 \times L \times h \times n \times d \times \text{sizeof(dtype)} $$
+</div>
+<p>其中 $L$ 是层数，$h$ 是头数。当 $n$ 翻倍时，KV Cache <strong>线性翻倍</strong>。虽然这不是 $O(n^2)$，但它与 $O(n^2)$ 的计算诅咒叠加，使得长文本推理成为"不可能任务"。</p>
+
+<div class="card-summary">
+    <span class="card-title">💡 一句话理解本章</span>
+    Self-Attention 的 $QK^T$ 强制计算所有 token 两两之间的相似度，产生 $n \times n$ 的注意力矩阵。当 $n$ 从 4K 扩展到 1M 时，这个矩阵的元素数量爆炸了 6.5 万倍，这就是 O(n²) 诅咒的数学根源。
+</div>
+
+<div class="card-check">
+    <span class="card-title">🧠 自检一下</span>
+    <ol>
+        <li>为什么 $QK^T$ 的复杂度一定是 $O(n^2)$？能不能通过减少维度 $d$ 来规避？</li>
+        <li>当序列长度从 8K 扩展到 128K（16 倍），计算量增长多少倍？显存增长多少倍？</li>
+        <li>KV Cache 的复杂度是 $O(n)$ 还是 $O(n^2)$？它为什么在长文本推理中同样致命？</li>
+    </ol>
+</div>
+
+<h2>第二章：O(n²) 诅咒的历史演进——从 RNN 到 Transformer 的两难选择</h2>
+
+<div class="card-note depth-medium">
+    <span class="card-title">📖 本章导读</span>
+    <p>O(n²) 不是一开始就有的"诅咒"——它是我们为了获得更好的模型效果而主动选择的代价。本章将带你穿越序列建模的三十年，理解为什么我们最终走到了 O(n²) 这一步，以及为什么"破局"如此艰难。</p>
+</div>
+
+<h3>2.1 第一阶段：RNN 时代——串行的记忆者</h3>
+
+<p>在 Transformer 出现之前，序列建模的主流是循环神经网络（RNN）及其变体 LSTM、GRU。它们的核心思想很朴素：<strong>像人读书一样，从左到右一个词一个词地读，把读过的内容压缩进一个固定大小的"笔记本"（隐状态 h_t）里。</strong></p>
+
+<div class="math-block depth-medium">
+    $$ h_t = f(h_{t-1}, x_t), \quad y_t = g(h_t) $$
+</div>
+
+<p>RNN 的优点很鲜明：</p>
+<ul>
+    <li><strong>推理内存 O(1)</strong>：只需要保存当前的隐状态，序列再长也不怕。</li>
+    <li><strong>参数效率高</strong>：同一组权重在每个时间步共享，参数量与序列长度无关。</li>
+    <li><strong>因果天然</strong>：自左向右的计算方式天然适配自回归生成。</li>
+</ul>
+
+<div class="card-metaphor depth-medium">
+    <span class="card-title">📝 笔记本隐喻——RNN 的困境</span>
+    <p>想象你只有一页 A4 纸的笔记本，要读完一本 1000 页的书并记录所有重要信息：</p>
+    <ul>
+        <li>读到第 10 页时，笔记本还能记下主要人物和背景设定</li>
+        <li>读到第 100 页时，你不得不擦掉一些早期的细节来腾空间</li>
+        <li>读到第 500 页时，开头的人物名字可能已经模糊不清</li>
+        <li>读到第 1000 页时，你只记得大概情节，具体细节早已遗失</li>
+    </ul>
+    <p>这就是 RNN 的核心问题：<strong>固定大小的隐状态是信息的瓶颈</strong>，长距离依赖会在传递过程中逐渐衰减。</p>
+</div>
+
+<p>RNN 的致命缺陷同样来自它的串行本质：</p>
+<ul>
+    <li><strong>训练无法并行</strong>：$h_t$ 依赖 $h_{t-1}$，必须逐时间步计算，无法利用 GPU 的并行计算能力。序列越长，训练越慢。</li>
+    <li><strong>梯度消失/爆炸</strong>：长距离反向传播时，梯度要穿过层层时间步，要么指数级衰减（记不住久远的事），要么指数级爆炸（训练不稳定）。</li>
+    <li><strong>长距离依赖弱</strong>：即使有 LSTM 的门控机制，信息在数百步后仍然大幅丢失。</li>
+</ul>
+
+<div class="card-example depth-deep">
+    <span class="card-title">🔍 手算实例：RNN 的梯度消失</span>
+    <p>考虑最简单的 RNN：$h_t = W h_{t-1} + U x_t$，激活函数为 tanh。</p>
+    <p>损失对 h_1 的梯度需要经过 T-1 步反向传播：</p>
+    <div class="math-block">
+        $$ \frac{\partial h_T}{\partial h_1} = \prod_{t=2}^T \frac{\partial h_t}{\partial h_{t-1}} = \prod_{t=2}^T W^T \cdot \text{diag}(\sigma'(h_t)) $$
+    </div>
+    <p>如果 W 的谱半径 < 1，经过 T=100 步后，梯度可能缩小到原来的 10^{-20}，几乎完全消失。这就是为什么 RNN 难以记住 100 步之前的信息。</p>
+</div>
+
+<h3>2.2 第二阶段：CNN 尝试——并行的局部视野</h3>
+
+<p>为了解决 RNN 训练慢的问题，研究者尝试用 CNN 做序列建模（如 WaveNet、TCN）。CNN 的优势是<strong>完全并行</strong>——所有位置的卷积可以同时计算。</p>
+
+<p>但 CNN 有自己的问题：</p>
+<ul>
+    <li><strong>感受野有限</strong>：每层卷积只能看到局部的几个 token。要看长距离依赖，需要堆叠很多层或使用膨胀卷积（dilated convolution）。</li>
+    <li><strong>远距离信息衰减</strong>：即使通过多层堆叠扩大感受野，两端的信息也需要经过多次变换才能相遇，路径上的信息损失不可忽视。</li>
+    <li><strong>位置不敏感</strong>：CNN 对位置的编码能力弱于 RNN，需要额外的位置编码。</li>
+</ul>
+
+<div class="card-summary depth-medium">
+    <span class="card-title">💡 一句话理解 2.1-2.2</span>
+    RNN 解决了"内存"问题（O(1) 推理），但牺牲了"速度"（串行训练）和"长距离记忆"（梯度消失）。CNN 解决了"速度"问题（并行训练），但牺牲了"长距离"（感受野有限）。两者都在某个维度上妥协。
+</div>
+
+<h3>2.3 第三阶段：Attention 的崛起——用全局连接换效果</h3>
+
+<p>2014 年，Bahdanau 等人在机器翻译任务中首次提出 Attention 机制，核心洞察是：<strong>为什么要把所有信息压缩进一个隐状态？让每个位置直接"看到"所有位置不就行了？</strong></p>
+
+<p>2017 年，Transformer 论文《Attention Is All You Need》将这一思想推向极致——完全抛弃 RNN 和 CNN，纯用自注意力机制搭建网络。效果是惊人的：</p>
+
+<ul>
+    <li><strong>效果碾压</strong>：在机器翻译等任务上，BLEU 分数大幅超越此前所有模型。</li>
+    <li><strong>训练并行</strong>：所有位置的注意力计算可以同时进行，GPU 利用率拉满。</li>
+    <li><strong>长距离直达</strong>：任意两个 token 之间只有一跳的距离，梯度直接传播，没有消失问题。</li>
+</ul>
+
+<div class="card-metaphor depth-medium">
+    <span class="card-title">🤝 全员握手——Attention 的代价</span>
+    <p>如果说 RNN 是"传纸条"（信息从左传到右，每经过一个人就模糊一点），CNN 是"传话游戏"（信息从中心向外扩散，越远越失真），那么 Transformer 就是"全员握手"——每个人直接和所有人对话，信息零损耗。</p>
+    <p>但代价是什么？<strong>4 个人握手只需要 6 次，100 个人握手需要 4950 次，10000 个人握手需要近 5000 万次。</strong>当序列长度增加时，握手次数（计算量和内存）呈平方级爆炸。</p>
+</div>
+
+<p>当时的研究者并不太担心这个问题——因为 2017 年大家用的序列长度还只有 512 或 1024。512×512 的注意力矩阵只有 26 万个元素，完全装得下显存。</p>
+
+<h3>2.4 诅咒的形成：当大模型遇上长上下文</h3>
+
+<p>O(n²) 从"小问题"变成"诅咒"，是两个趋势叠加的结果：</p>
+
+<ol>
+    <li><strong>模型越做越大</strong>：从 BERT-base（12 层，12 头）到 GPT-3（96 层，96 头），注意力头数和层数都翻了近 10 倍，显存占用同步增长。</li>
+    <li><strong>上下文越要越长</strong>：从问答（~512）→ 文章摘要（~4K）→ 文档问答（~32K）→ 代码仓库（~128K）→ 整本书（~1M），应用场景不断push序列长度的边界。</li>
+</ol>
+
+<div class="card-important depth-medium">
+    <span class="card-title">📊 从 512 到 1M：显存增长了多少？</span>
+    <p>以单个注意力头、单精度 FP16 计算：</p>
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr><th>年代</th><th>典型长度</th><th>注意力矩阵元素数</th><th>显存占用</th><th>相对增长</th></tr>
+            </thead>
+            <tbody>
+                <tr><td>2017 (Transformer)</td><td>512</td><td>262K</td><td>0.5 MB</td><td>1×</td></tr>
+                <tr><td>2019 (GPT-2)</td><td>1K</td><td>1M</td><td>2 MB</td><td>4×</td></tr>
+                <tr><td>2020 (GPT-3)</td><td>2K</td><td>4M</td><td>8 MB</td><td>16×</td></tr>
+                <tr><td>2022 (GPT-3.5)</td><td>4K</td><td>16M</td><td>32 MB</td><td>64×</td></tr>
+                <tr><td>2023 (GPT-4)</td><td>32K</td><td>1B</td><td>2 GB</td><td>4096×</td></tr>
+                <tr><td>2024 (Claude 3)</td><td>200K</td><td>40B</td><td>80 GB</td><td>160000×</td></tr>
+            </tbody>
+        </table>
+    </div>
+    <p>注意：这只是<strong>一个头、一层</strong>的注意力矩阵显存。实际模型有几十层、几十上百个头，再加上 KV Cache、模型参数、优化器状态……实际显存需求是这个数字的数百倍。</p>
+</div>
+
+<p>到了 2023 年，O(n²) 已经从"可以接受的代价"变成了"不可逾越的高墙"。人们意识到：如果继续沿着标准 Transformer 的路线走下去，100 万 token 的上下文需要的显存将是天文数字。</p>
+
+<p>于是，三条破局路线应运而生——这正是本文下篇要深入探讨的内容。</p>
+
+<div class="card-summary">
+    <span class="card-title">💡 一句话理解本章</span>
+    O(n²) 诅咒不是天生的，而是我们主动选择的结果——为了并行训练和长距离依赖，我们选择了"全员握手"的 Attention。但当序列长度从 512 增长到 1M 时，平方复杂度的代价从"可忽略"变成了"不可承受"，破局势在必行。
+</div>
+
+<div class="card-check depth-deep">
+    <span class="card-title">🧠 自检一下</span>
+    <ol>
+        <li>RNN、CNN、Transformer 在训练并行度和长距离依赖两个维度上各有什么优劣？</li>
+        <li>为什么说"Attention 的 O(n²) 是我们主动选择的代价"？我们换来了什么？</li>
+        <li>如果序列长度从 1K 增长到 128K（128 倍），标准 Attention 的计算量增长了多少倍？</li>
+    </ol>
+</div>
+
+<hr class="hr-divider">
+
+<h2>下篇：三条技术路线的全面对决</h2>
+
+<h3>第三章：稀疏注意力（Sparse Attention）——用"局部视野"替代"全局凝视"</h3>
+
+<h4>3.1 老方案及其问题：标准 Attention 的"一个都不能少"</h4>
+
+<p>标准 Transformer 要求每个 token 都 attend 到所有其他 token。这就像开一场 10,000 人的大会，每个人都要和另外 9,999 个人握手——显然不现实。</p>
+
+<p>早期的简化方案：</p>
+<ul>
+    <li><strong>简单截断（Truncation）</strong>：只保留最近 4K token，之前的全部丢弃。问题：模型读完一本书就忘了开头，无法回答"第一章的伏笔在结尾如何回收"。</li>
+    <li><strong>均匀采样（Uniform Sampling）</strong>：每 100 个 token 采样 1 个。问题：可能恰好漏掉关键信息（如"不""是"这样的否定词）。</li>
+</ul>
+
+<h4>3.2 新方案核心假设：BigBird 的三重洞察</h4>
+
+<p>BigBird（2020）提出了一个被严格证明的框架：只要满足三种连接模式，稀疏注意力就能保持 Transformer 的表达能力（甚至图灵完备）。</p>
+
+<ol>
+    <li><strong>局部性假设（Local / Sliding Window）</strong>：自然语言和代码具有强烈的局部相关性。一个词的意义主要由其左右邻居决定。</li>
+    <li><strong>全局锚点假设（Global）</strong>：少数特殊 token（如 [CLS]、段落首 token）需要拥有全局视野，所有 token 也需要能看到它们。</li>
+    <li><strong>随机连接假设（Random）</strong>：在局部和全局之外，少量随机连接可以弥补长距离依赖的缺失，类似小世界网络效应。</li>
+</ol>
+
+<div class="card-metaphor">
+    <span class="card-title">🏙️ 城市隐喻——社区、广场与随机邂逅</span>
+    <p>想象一座超大城市有 100 万居民（100万 token）：</p>
+    <ul>
+        <li><strong>局部窗口（邻里社区）</strong>：你只和住在同一条街的邻居交流（左右各 50 户）。这是最高频、最重要的信息来源。</li>
+        <li><strong>全局锚点（城市广场）</strong>：市政府广场（全局 token）广播重要信息，所有居民都能听到；居民也可以向广场反馈。这保证了全局一致性。</li>
+        <li><strong>随机连接（随机邂逅）</strong>：每周你随机认识 10 个来自城市另一端的人。虽然数量少，但足以让信息跨越社区边界，避免城市分裂成孤岛。</li>
+    </ul>
+    <p>BigBird 的数学证明告诉我们：<strong>只要这三类连接存在，信息就能在整座城市中有效传播，而不需要每个人都和另外 99 万人握手。</strong></p>
+</div>
+
+<h4>3.3 数学推导与架构设计</h4>
+
+<p><strong>步骤 1：定义三种 Attention Mask</strong></p>
+
+<p>设序列长度为 $n$，定义三种二元掩码矩阵 $M^{(local)}, M^{(global)}, M^{(random)} \in \{0,1\}^{n \times n}$。</p>
+
+<p><strong>（1）滑动窗口掩码 $M^{(local)}$</strong></p>
+<p>每个 token 只关注左右各 $w/2$ 个邻居（窗口大小 $w$ 为超参数）：</p>
+<div class="math-block">
+    $$ M^{(local)}_{ij} = \begin{cases} 1, & \text{if } 0 < |i - j| \leq w/2 \\ 0, & \text{otherwise} \end{cases} $$
+</div>
+
+<p><strong>（2）全局掩码 $M^{(global)}$</strong></p>
+<p>假设有 $g$ 个全局 token（如固定间隔选取，或特定位置如 [CLS]）。全局 token 可以看到所有 token，所有 token 也可以看到全局 token：</p>
+<div class="math-block">
+    $$ M^{(global)}_{ij} = 1 \quad \text{if } i \in \mathcal{G} \text{ or } j \in \mathcal{G} $$
+</div>
+<p>其中 $\mathcal{G}$ 是全局 token 的索引集合，$|\mathcal{G}| = g$。</p>
+
+<p><strong>（3）随机掩码 $M^{(random)}$</strong></p>
+<p>每个 token 随机选择 $r$ 个其他 token 建立连接（通常有固定随机种子保证可复现）：</p>
+<div class="math-block">
+    $$ M^{(random)}_{ij} = 1 \quad \text{if } j \in \text{Random}_r(i) $$
+</div>
+
+<p><strong>步骤 2：合并掩码与稀疏 Attention 计算</strong></p>
+
+<p>最终的注意力掩码是三种模式的并集：</p>
+<div class="math-block">
+    $$ M = M^{(local)} \lor M^{(global)} \lor M^{(random)} $$
+</div>
+
+<p>稀疏 Attention 的前向计算变为：</p>
+<div class="math-block">
+    $$ \text{SparseAttn}(Q, K, V) = \text{softmax}\left(\frac{QK^T \odot M}{\sqrt{d_k}} + \text{Bias}\right)V $$
+</div>
+<p>其中 $\odot$ 是逐元素乘法（Hadamard 积），将非连接位置的分数置为 $-\infty$（softmax 后变为 0）。</p>
+
+<div class="card-example">
+    <span class="card-title">🔍 手算实例：n=8, w=2, g=1, r=1</span>
+    <p>设序列长度 $n=8$，窗口大小 $w=2$（只看左右各 1 个邻居），全局 token 为第 0 位（$g=1$），每个 token 随机关注 1 个 token（$r=1$，这里假设随机选择对角线远端）。</p>
+    <p><strong>标准 Attention 的 Mask</strong>（下三角因果 + 全连接）：</p>
+    <pre>
+    1 0 0 0 0 0 0 0
+    1 1 0 0 0 0 0 0
+    1 1 1 0 0 0 0 0
+    1 1 1 1 0 0 0 0
+    1 1 1 1 1 0 0 0
+    1 1 1 1 1 1 0 0
+    1 1 1 1 1 1 1 0
+    1 1 1 1 1 1 1 1
+    （共 36 个 1）</pre>
+    <p><strong>BigBird 稀疏 Mask</strong>（非因果双向示例，展示结构）：</p>
+    <pre>
+    行\列  0 1 2 3 4 5 6 7
+    0(g)   1 1 1 1 1 1 1 1  ← 全局token看全部
+    1      1 1 1 0 0 0 0 0  ← 局部看0,2；全局回看0
+    2      0 1 1 1 0 0 0 0  ← 局部看1,3
+    3      0 0 1 1 1 0 0 0  ← 局部看2,4；全局回看0
+    4      0 0 0 1 1 1 0 0  ← 局部看3,5
+    5      0 0 0 0 1 1 1 0  ← 局部看4,6；全局回看0
+    6      0 0 0 0 0 1 1 1  ← 局部看5,7
+    7      1 0 0 0 0 0 1 1  ← 局部看6；全局回看0；随机看0</pre>
+    <p><strong>统计</strong>：标准 Attention 需要计算 $8 \times 8 = 64$ 对分数。BigBird 稀疏 Mask 中只有约 $8 + 8 \times 3 = 32$ 个 1（全局 8 个 + 局部约 16 个 + 随机 8 个，去重后约 32）。<strong>计算量减少约 50%</strong>。当 $n=100K$ 时，窗口 $w=512$ 固定，计算量从 $10^{10}$ 降到 $10^8$，差距达到 <strong>100 倍</strong>。</p>
+</div>
+
+<p><strong>步骤 3：复杂度分析——为什么总复杂度是 O(n)？</strong></p>
+
+<p>分别计算三种模式的非零元素数量：</p>
+<ul>
+    <li><strong>局部窗口</strong>：每个 token 关注 $w$ 个邻居，总计 $n \cdot w$ 条边。当 $w$ 为常数时，是 <strong>$O(n)$</strong>。</li>
+    <li><strong>全局锚点</strong>：$g$ 个全局 token，每个与所有 $n$ 个 token 双向连接，总计 $2gn - g^2$ 条边。当 $g$ 为常数时，是 <strong>$O(n)$</strong>。</li>
+    <li><strong>随机连接</strong>：每个 token 有 $r$ 条随机边，总计 $n \cdot r$ 条边。当 $r$ 为常数时，是 <strong>$O(n)$</strong>。</li>
+</ul>
+
+<p>合并后，稀疏 Attention 的总计算复杂度为：</p>
+<div class="math-block">
+    $$ O(n(w + g + r)) = O(n) \quad \text{（当 } w, g, r \text{ 为常数时）} $$
+</div>
+
+<div class="card-note">
+    <span class="card-title">🔍 为什么 BigBird 是图灵完备的？</span>
+    <p>BigBird 的论文严格证明了：由局部窗口 + 全局 token + 随机连接构成的稀疏图，等价于一种"扩展图"（Expander Graph）。这种图具有极强的信息传播能力——任何两个节点之间的信息都可以在 $O(\log n)$ 步内传播到彼此。</p>
+    <p>直观理解：<strong>局部连接负责细节，全局连接负责广播，随机连接负责"搭桥"</strong>。三者结合，既避免了全连接的平方灾难，又保留了长距离信息传播的能力。</p>
+</div>
+
+<h4>3.4 训练与推理的具体计算过程</h4>
+
+<p><strong>前向计算（以 Longformer 为例，$w=512, g=2$）</strong></p>
+<ol>
+    <li><strong>构建稀疏索引</strong>：预计算每个 token 需要 attend 到的邻居索引列表（局部窗口、全局 token、随机 token）。</li>
+    <li><strong>分块 Gather</strong>：将 Key 和 Value 按稀疏索引分块提取。对于每个 query token $i$，只提取其需要的 $w+g+r$ 个 key/value 向量。</li>
+    <li><strong>局部 Attention 计算</strong>：对每个 query，计算其与提取出的 key 的 dot-product，得到长度约为 $w+g+r$ 的分数向量。</li>
+    <li><strong>Softmax 与加权求和</strong>：在局部分数上应用 softmax，然后与对应的 value 加权求和，得到该 query 的输出。</li>
+    <li><strong>全局 token 特殊处理</strong>：全局 token 的 query 需要 attend 到全部 $n$ 个 token，因此全局 token 的计算量仍是 $O(n)$，但全局 token 数量 $g$ 很少（如 2~16 个），总开销为 $O(gn)$，仍是线性。</li>
+</ol>
+
+<p><strong>后向计算（梯度传播）</strong></p>
+<ol>
+    <li><strong>输出梯度回传</strong>：假设损失函数对 Attention 输出 $\frac{\partial \mathcal{L}}{\partial O}$ 已求得。</li>
+    <li><strong>Value 梯度</strong>：$\frac{\partial \mathcal{L}}{\partial V_j} = \sum_{i: j \in \text{Mask}(i)} \frac{\partial \mathcal{L}}{\partial O_i} \cdot \alpha_{ij}$，其中 $\alpha_{ij}$ 是 attention 权重。<strong>只有被连接的位置才有梯度</strong>。</li>
+    <li><strong>Query/Key 梯度</strong>：通过 softmax 的导数公式，梯度只在稀疏 mask 的非零位置传播。计算量与前向同阶。</li>
+    <li><strong>关键特性</strong>：稀疏 mask 在训练前固定，梯度不会"穿透"被 mask 掉的零位置。这保证了稀疏性在训练过程中不会被破坏。</li>
+</ol>
+
+<h4>3.5 具体收益与对比</h4>
+
+<div class="table-wrap">
+    <table>
+        <thead>
+            <tr><th>维度</th><th>标准 Transformer</th><th>BigBird / Longformer</th></tr>
+        </thead>
+        <tbody>
+            <tr><td>Attention 复杂度</td><td>$O(n^2)$</td><td>$O(n)$</td></tr>
+            <tr><td>内存复杂度</td><td>$O(n^2)$</td><td>$O(n)$</td></tr>
+            <tr><td>长距离依赖</td><td>直接全连接</td><td>通过全局+随机间接传播</td></tr>
+            <tr><td>典型可处理长度</td><td>~8K（单卡）</td><td>~409K（Longformer-base）</td></tr>
+            <tr><td>训练稳定性</td><td>稳定</td><td>需调窗口大小</td></tr>
+            <tr><td>下游任务精度</td><td>基线</td><td>QA/文档级任务接近基线</td></tr>
+            <tr><td>代表模型</td><td>GPT-3, LLaMA</td><td>Longformer, BigBird, Sparse Transformer</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<div class="card-example">
+    <span class="card-title">具体实例</span>
+    <p>用 Longformer-base 处理一篇 16K token 的法律合同。设置窗口 $w=512$，全局 token 为每段首句（约 20 个）。</p>
+    <ul>
+        <li>标准 BERT：Attention 矩阵 16K × 16K = 256M 元素，显存爆炸。</li>
+        <li>Longformer：每个 token 只看 512 个邻居 + 20 个全局 + 5 个随机 = 537 个。总元素约 8.6M，<strong>减少 30 倍</strong>。</li>
+        <li>效果：在合同条款抽取任务上，F1 达到标准 BERT（截断到 512）的 1.4 倍，因为模型能同时看到合同开头的定义条款和结尾的违约责任。</li>
+    </ul>
+</div>
+
+<h4>3.6 🔧 实践踩坑指南</h4>
+
+<div class="card-tip">
+    <span class="card-title">1. 窗口大小 $w$ 怎么选？</span>
+    <ul>
+        <li><strong>文本任务</strong>：$w=512$ 是经验默认值，能覆盖 2~3 个句子。</li>
+        <li><strong>代码任务</strong>：建议 $w=1024$ 或更大，因为代码的局部依赖（如函数体）可能比自然语言更长。</li>
+        <li><strong>陷阱</strong>：$w$ 太小（如 64）会丢失句内依赖；$w$ 太大（如 4K）会退化为接近标准 Attention，失去稀疏意义。</li>
+    </ul>
+</div>
+
+<div class="card-tip">
+    <span class="card-title">2. 全局 token 放哪里？</span>
+    <ul>
+        <li><strong>[CLS] 和 [SEP]</strong>：最稳妥的方案，所有 token 都能看到它们。</li>
+        <li><strong>每段/每页第一个 token</strong>：适合文档级任务，让段落间有信息枢纽。</li>
+        <li><strong>随机均匀分布</strong>：BigBird 论文推荐，效果通常优于固定位置。</li>
+    </ul>
+</div>
+
+<div class="card-tip">
+    <span class="card-title">3. 随机种子的陷阱</span>
+    <ul>
+        <li>随机连接必须使用<strong>固定种子</strong>，保证训练/推理的 mask 一致。</li>
+        <li>不要每轮训练重新随机，否则模型无法稳定学习随机边的语义。</li>
+    </ul>
+</div>
+
+<div class="code-collapse depth-deep">
+    <div class="code-collapse-header">
+        <span class="code-collapse-title">
+            <span class="lang-badge">PyTorch</span>
+            稀疏注意力极简实现（滑动窗口版）
+        </span>
+        <span class="code-collapse-toggle">
+            展开查看 <span class="arrow">▼</span>
+        </span>
+    </div>
+    <div class="code-collapse-body">
+<pre><code>import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class SlidingWindowAttention(nn.Module):
+    """
+    极简滑动窗口注意力实现
+    每个 token 只关注左右各 window_size//2 个邻居
+    """
+    def __init__(self, d_model, n_heads, window_size=512):
+        super().__init__()
+        self.d_model = d_model
+        self.n_heads = n_heads
+        self.d_head = d_model // n_heads
+        self.window_size = window_size
+
+        self.W_q = nn.Linear(d_model, d_model)
+        self.W_k = nn.Linear(d_model, d_model)
+        self.W_v = nn.Linear(d_model, d_model)
+        self.W_o = nn.Linear(d_model, d_model)
+
+    def forward(self, x, mask=None):
+        """
+        x: [batch, seq_len, d_model]
+        返回: [batch, seq_len, d_model]
+        """
+        B, N, _ = x.shape
+        w = self.window_size
+
+        # 1. 投影得到 Q, K, V
+        Q = self.W_q(x).view(B, N, self.n_heads, self.d_head).transpose(1, 2)
+        K = self.W_k(x).view(B, N, self.n_heads, self.d_head).transpose(1, 2)
+        V = self.W_v(x).view(B, N, self.n_heads, self.d_head).transpose(1, 2)
+        # Q, K, V: [B, H, N, d_head]
+
+        # 2. 构建滑动窗口掩码（因果+窗口）
+        # 用 unfold 将 K, V 按窗口分组
+        # 先 padding 左右，确保边缘 token 也有完整窗口
+        pad_left = w // 2
+        pad_right = w - 1 - pad_left  # 因果时只看左边，可调整
+
+        # 简化版：用 mask 方式实现（适合理解，非最高效）
+        scores = torch.matmul(Q, K.transpose(-2, -1)) / (self.d_head ** 0.5)
+        # [B, H, N, N]
+
+        # 3. 构建滑动窗口 mask: |i-j| <= w/2 且 j <= i（因果）
+        pos_i = torch.arange(N, device=x.device).unsqueeze(1)
+        pos_j = torch.arange(N, device=x.device).unsqueeze(0)
+        window_mask = (pos_i - pos_j >= 0) & (pos_i - pos_j <= w // 2)
+        # [N, N]
+
+        # 将非窗口位置设为 -inf
+        scores = scores.masked_fill(~window_mask.unsqueeze(0).unsqueeze(0), float('-inf'))
+
+        # 4. Softmax + 加权求和
+        attn = F.softmax(scores, dim=-1)
+        output = torch.matmul(attn, V)  # [B, H, N, d_head]
+
+        # 5. 合并多头
+        output = output.transpose(1, 2).contiguous().view(B, N, self.d_model)
+        return self.W_o(output)
+
+# ========== 测试 ==========
+if __name__ == "__main__":
+    B, N, d = 2, 1024, 256
+    n_heads, window = 8, 128
+
+    model = SlidingWindowAttention(d, n_heads, window)
+    x = torch.randn(B, N, d)
+    out = model(x)
+    print(f"输入: {x.shape}, 输出: {out.shape}")
+    print(f"窗口大小: {window}, 理论显存节省: {N / (window//2):.1f}x")
+</code></pre>
+    </div>
+</div>
+
+<div class="card-summary">
+    <span class="card-title">💡 一句话理解本章</span>
+    稀疏注意力用"邻里社区 + 城市广场 + 随机邂逅"三层结构替代"全民握手"，将 $O(n^2)$ 严格降为 $O(n)$，代价是远距离依赖需要多跳传播，而非直达。
+</div>
+
+<div class="card-check depth-deep">
+    <span class="card-title">🧠 自检一下</span>
+    <ol>
+        <li>BigBird 的三种连接模式中，哪一种负责"细节"？哪一种负责"广播"？哪一种负责"搭桥"？</li>
+        <li>为什么全局 token 的数量 $g$ 必须很少（如常数级）？如果 $g=n/2$，复杂度会变成什么？</li>
+        <li>稀疏 Attention 的后向传播中，被 mask 为零的位置为什么没有梯度？这对模型学习有什么影响？</li>
+    </ol>
+</div>
+
+<hr class="hr-divider">
+
+<h3>第四章：线性注意力（Linear Attention / FAVOR+）——用"核技巧"打破平方诅咒</h3>
+
+<h4>4.1 老方案及其问题：Softmax 的"结合律封锁"</h4>
+
+<p>标准 Attention 的瓶颈在于矩阵乘法的顺序被 softmax 锁定：</p>
+<div class="math-block">
+    $$ \text{Attention}(Q,K,V) = \text{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right)V $$
+</div>
+
+<p>由于 softmax 作用在 $QK^T$ 的<strong>行内</strong>（先算内积，再归一化），我们必须先计算出完整的 $n \times n$ 矩阵 $QK^T$，才能进行后续操作。这个计算顺序是<strong>刚性</strong>的，无法通过矩阵结合律优化。</p>
+
+<div class="card-important">
+    <span class="card-title">"结合律封锁"的精确含义</span>
+    <p>标准的矩阵乘法满足结合律：$(AB)C = A(BC)$。但 softmax 不是线性操作，它破坏了结合律：</p>
+    <div class="math-block">
+        $$ \text{softmax}(QK^T) \cdot V \neq Q \cdot \text{softmax}(K^T V) \quad \text{（数学上无意义）} $$
+    </div>
+    <p>因此，我们无法将计算顺序从 "先算 $QK^T$" 改为 "先算 $K^T V$"，而后者的大小仅为 $d \times d$。</p>
+</div>
+
+<h4>4.2 新方案核心假设：Performer 的 FAVOR+ 洞察</h4>
+
+<p>Performer（2020）提出了一种激进思路：<strong>如果 softmax 可以被一个无正项的核函数（kernel）近似，那么结合律就重新生效了。</strong></p>
+
+<ol>
+    <li><strong>核函数假设</strong>：存在特征映射 $\phi: \mathbb{R}^d \to \mathbb{R}^m$，使得 $e^{q^T k} \approx \phi(q)^T \phi(k)$。</li>
+    <li><strong>结合律重构假设</strong>：一旦注意力分数表示为 $\phi(Q)\phi(K)^T$，就可以先计算 $\phi(K)^T V$（大小 $m \times d$），再左乘 $\phi(Q)$，从而避免显式构造 $n \times n$ 矩阵。</li>
+    <li><strong>无偏估计假设</strong>：使用正交随机特征（ORF）而非独立随机特征，可以大幅降低近似方差。</li>
+</ol>
+
+<h4>4.3 数学推导：从 Softmax 到线性化的四步变身</h4>
+
+<p><strong>步骤 1：将 Softmax 表示为核函数</strong></p>
+
+<p>标准的 attention 分数（忽略缩放）为：</p>
+<div class="math-block">
+    $$ A_{ij} = \frac{e^{q_i^T k_j}}{\sum_{l=1}^n e^{q_i^T k_l}} $$
+</div>
+
+<p>分子分母同乘 $e^{-||q_i||^2/2} \cdot e^{-||k_j||^2/2}$，利用高斯核的分解性质：</p>
+<div class="math-block">
+    $$ e^{q_i^T k_j} = e^{-||q_i||^2/2} \cdot e^{-||q_i - k_j||^2/2} \cdot e^{||k_j||^2/2} $$
+</div>
+
+<p>其中 $e^{-||q_i - k_j||^2/2}$ 是<strong>高斯核</strong>（Gaussian Kernel）。根据 Bochner 定理，高斯核可以用随机傅里叶特征近似：</p>
+<div class="math-block">
+    $$ e^{-||q - k||^2/2} = \mathbb{E}_{\omega \sim \mathcal{N}(0,I)}\left[ e^{i\omega^T q} \cdot e^{-i\omega^T k} \right] $$
+</div>
+
+<p><strong>步骤 2：构造实值特征映射 $\phi$</strong></p>
+
+<p>取 $m$ 个随机样本 $\omega_1, \dots, \omega_m \sim \mathcal{N}(0, I_d)$，定义特征映射：</p>
+<div class="math-block">
+    $$ \phi(x) = \frac{1}{\sqrt{m}} \exp\left(-\frac{||x||^2}{2}\right) \cdot \begin{bmatrix} \cos(\omega_1^T x) & \sin(\omega_1^T x) & \cdots & \cos(\omega_m^T x) & \sin(\omega_m^T x) \end{bmatrix}^T $$
+</div>
+
+<p>则有无偏估计：</p>
+<div class="math-block">
+    $$ \phi(q)^T \phi(k) \approx e^{-||q-k||^2/2} $$
+</div>
+
+<p>进而：</p>
+<div class="math-block">
+    $$ e^{q^T k} \approx e^{||q||^2/2} \cdot \phi(q)^T \phi(k) \cdot e^{||k||^2/2} $$
+</div>
+
+<p><strong>步骤 3：利用结合律重构计算顺序</strong></p>
+
+<p>将分子和分母分别线性化。定义：</p>
+<div class="math-block">
+    $$ S_i = \sum_{j=1}^n \phi(k_j)^T v_j \quad \in \mathbb{R}^{m \times d} $$
+    $$ Z_i = \sum_{j=1}^n \phi(k_j) \quad \in \mathbb{R}^m $$
+</div>
+
+<p>则第 $i$ 个 token 的输出为：</p>
+<div class="math-block">
+    $$ o_i = \frac{\phi(q_i)^T S_i}{\phi(q_i)^T Z_i} $$
+</div>
+
+<div class="card-note">
+    <span class="card-title">🔍 精读公式的结构</span>
+    <p>注意 $S_i$ 和 $Z_i$ 的维度：</p>
+    <ul>
+        <li>$\phi(k_j) \in \mathbb{R}^m$（特征向量，长度 $m$）</li>
+        <li>$v_j \in \mathbb{R}^d$（value 向量，长度 $d$）</li>
+        <li>$\phi(k_j)^T v_j$ 是外积，结果 $m \times d$ 矩阵</li>
+        <li>对 $j=1$ 到 $n$ 求和，$S_i$ 仍是 $m \times d$ 矩阵，<strong>与 $n$ 无关</strong>！</li>
+    </ul>
+    <p>这意味着：无论序列多长，我们只需要维护一个固定大小 $m \times d$ 的累积矩阵 $S$ 和一个 $m$ 维的累积向量 $Z$。</p>
+</div>
+
+<p><strong>步骤 4：正交随机特征（ORF）——降低方差的关键</strong></p>
+
+<p>如果 $\omega_i$ 独立采样，方差为 $O(1/m)$。Performer 提出使用<strong>正交随机特征</strong>（Orthogonal Random Features）：先采样一个高斯矩阵，然后通过 QR 分解正交化。</p>
+
+<p>正交化后的特征映射方差降至 $O(1/m^2)$，在相同 $m$ 下精度大幅提升。实践中 $m=64$ 或 $m=256$ 即可达到接近标准 Attention 的效果。</p>
+
+<h4>4.4 训练与推理的具体计算过程（附手算实例）</h4>
+
+<div class="card-example">
+    <span class="card-title">🔍 手算实例：n=4, d=2, m=2 的完整前向过程</span>
+    <p>为简化，使用<strong>恒等特征映射</strong>的简化版（仅展示结合律的魔力，实际应使用随机特征）：</p>
+    <p>设 $\phi(x) = x$（即 $m=d=2$），并忽略 softmax 的归一化，仅展示线性 Attention 的结构：</p>
+    <div class="math-block">
+        $$ Q = \begin{pmatrix} 1 & 0 \\ 0 & 1 \\ 1 & 1 \\ 0 & 0 \end{pmatrix}, \quad
+        K = \begin{pmatrix} 1 & 0 \\ 0 & 1 \\ 1 & 0 \\ 0 & 1 \end{pmatrix}, \quad
+        V = \begin{pmatrix} 1 \\ 2 \\ 3 \\ 4 \end{pmatrix} $$
+    </div>
+    <p><strong>标准路径（O(n²)）</strong>：</p>
+    <ol>
+        <li>$QK^T = \begin{pmatrix} 1 & 0 & 1 & 0 \\ 0 & 1 & 0 & 1 \\ 1 & 1 & 1 & 1 \\ 0 & 0 & 0 & 0 \end{pmatrix}$（4×4 矩阵，16 个元素）</li>
+        <li>Softmax 后（假设无缩放）每行归一化</li>
+        <li>$A \cdot V = \begin{pmatrix} 0.38 & 0.12 & 0.38 & 0.12 \\ \cdots \end{pmatrix} \begin{pmatrix} 1 \\ 2 \\ 3 \\ 4 \end{pmatrix} = \begin{pmatrix} 2.0 \\ 2.8 \\ 2.5 \\ 2.5 \end{pmatrix}$（近似值）</li>
+    </ol>
+    <p>核心：必须显式构造 4×4 矩阵。</p>
+    <p><strong>线性路径（O(n)）</strong>：</p>
+    <ol>
+        <li>先算 $K^T V$（注意这里用 $K$ 代替 $\phi(K)$，仅演示结合律）：
+            <div class="math-block">
+                $$ K^T V = \begin{pmatrix} 1 & 0 & 1 & 0 \\ 0 & 1 & 0 & 1 \end{pmatrix} \begin{pmatrix} 1 \\ 2 \\ 3 \\ 4 \end{pmatrix} = \begin{pmatrix} 4 \\ 6 \end{pmatrix} $$
+            </div>
+            计算量：$2 \times 4 \times 1 = 8$ 次乘法。结果是 $2 \times 1$ 向量，<strong>与 $n$ 无关</strong>。
+        </li>
+        <li>再算 $Q \cdot (K^T V)$：
+            <div class="math-block">
+                $$ Q \begin{pmatrix} 4 \\ 6 \end{pmatrix} = \begin{pmatrix} 4 \\ 6 \\ 10 \\ 0 \end{pmatrix} $$
+            </div>
+            计算量：$4 \times 2 \times 1 = 8$ 次乘法。
+        </li>
+    </ol>
+    <p><strong>结果对比</strong>：标准路径输出约 $[2.0, 2.8, 2.5, 2.5]^T$（softmax 归一化后），线性路径输出 $[4, 6, 10, 0]^T$（未归一化）。数值不同，但<strong>计算结构展示了结合律的魔力</strong>：线性路径从未构造 4×4 矩阵。</p>
+    <p><strong>复杂度对比</strong>：</p>
+    <ul>
+        <li>$n=4$ 时差异不大（都是 16~24 次操作）。</li>
+        <li>$n=1000, d=64, m=64$ 时：
+            <ul>
+                <li>标准：$1000 \times 1000 \times 64 = 64M$ 次乘法。</li>
+                <li>线性：$64 \times 1000 \times 64 + 1000 \times 64 \times 64 = 8.2M$ 次乘法。<strong>相差约 8 倍</strong>。</li>
+            </ul>
+        </li>
+        <li>$n=100K$ 时：标准需要 $6.4 \times 10^{12}$ 次乘法，线性仅需 $8.2 \times 10^8$ 次，<strong>相差近 8000 倍</strong>。</li>
+    </ul>
+</div>
+
+<p><strong>前向计算的完整流程（Performer 训练时）</strong></p>
+<ol>
+    <li><strong>随机特征初始化</strong>：生成正交随机矩阵 $\Omega \in \mathbb{R}^{m \times d}$（训练前一次生成，训练/推理复用）。</li>
+    <li><strong>特征映射</strong>：对每个 token 的 query 和 key 向量应用 $\phi$：
+        <div class="math-block">
+            $$ \tilde{Q}_i = \phi(q_i) = \frac{1}{\sqrt{m}} e^{-||q_i||^2/2} \cdot \text{trig}(\Omega \cdot q_i) \in \mathbb{R}^m $$
+        </div>
+        其中 $\text{trig}$ 表示 $\cos$ 和 $\sin$ 的拼接。
+    </li>
+    <li><strong>累积矩阵计算</strong>：
+        <div class="math-block">
+            $$ S = \sum_{j=1}^n \tilde{K}_j^T \cdot v_j \in \mathbb{R}^{m \times d}, \quad Z = \sum_{j=1}^n \tilde{K}_j \in \mathbb{R}^m $$
+        </div>
+    </li>
+    <li><strong>逐 token 输出</strong>：对每个 $i$，计算 $o_i = \frac{\tilde{Q}_i^T S}{\tilde{Q}_i^T Z}$。</li>
+    <li><strong>多头合并</strong>：与标准 Transformer 相同，拼接 $h$ 个头的输出。</li>
+</ol>
+
+<p><strong>后向计算（梯度传播）</strong></p>
+<ol>
+    <li><strong>输出梯度</strong>：$\frac{\partial \mathcal{L}}{\partial o_i}$ 从下游传回。</li>
+    <li><strong>Query 梯度</strong>：通过 $o_i = \frac{\tilde{Q}_i^T S}{\tilde{Q}_i^T Z}$ 的商式法则，分别对分子和分母求导。
+        <div class="math-block">
+            $$ \frac{\partial \mathcal{L}}{\partial \tilde{Q}_i} = \frac{\partial \mathcal{L}}{\partial o_i} \cdot \frac{S^T (\tilde{Q}_i^T Z) - Z^T (\tilde{Q}_i^T S)}{(\tilde{Q}_i^T Z)^2} $$
+        </div>
+    </li>
+    <li><strong>累积矩阵梯度</strong>：$\frac{\partial \mathcal{L}}{\partial S} = \sum_i \frac{\partial \mathcal{L}}{\partial o_i} \cdot \frac{\tilde{Q}_i}{\tilde{Q}_i^T Z}$，$\frac{\partial \mathcal{L}}{\partial Z}$ 类似。</li>
+    <li><strong>Key/Value 梯度</strong>：通过 $S = \sum_j \tilde{K}_j^T v_j$，梯度分散到各个 token 的 key 和 value。
+        <div class="math-block">
+            $$ \frac{\partial \mathcal{L}}{\partial v_j} = \left(\frac{\partial \mathcal{L}}{\partial S}\right)^T \cdot \tilde{K}_j, \quad \frac{\partial \mathcal{L}}{\partial \tilde{K}_j} = \frac{\partial \mathcal{L}}{\partial S} \cdot v_j^T $$
+        </div>
+    </li>
+    <li><strong>特征映射回传</strong>：通过 $\phi$ 的导数（包含三角函数和指数项），将梯度传回原始 $Q, K$ 空间。</li>
+</ol>
+
+<h4>4.5 具体收益与对比</h4>
+
+<div class="table-wrap">
+    <table>
+        <thead>
+            <tr><th>维度</th><th>标准 Softmax Attention</th><th>Performer (FAVOR+)</th></tr>
+        </thead>
+        <tbody>
+            <tr><td>核心操作</td><td>$\text{softmax}(QK^T)V$</td><td>$\phi(Q)(\phi(K)^TV)$</td></tr>
+            <tr><td>中间矩阵大小</td><td>$n \times n$</td><td>$m \times d$（与 $n$ 无关）</td></tr>
+            <tr><td>时间复杂度</td><td>$O(n^2 d)$</td><td>$O(nmd)$</td></tr>
+            <tr><td>空间复杂度</td><td>$O(n^2)$</td><td>$O(nm + md)$</td></tr>
+            <tr><td>长序列能力</td><td>~8K 即爆显存</td><td>可处理 100K+</td></tr>
+            <tr><td>近似误差</td><td>精确</td><td>$m$ 越大越精确，$m=256$ 时接近无损</td></tr>
+            <tr><td>因果掩码</td><td>天然支持</td><td>需通过累积和实现（RNN 模式）</td></tr>
+            <tr><td>代表模型</td><td>GPT, LLaMA</td><td>Performer, Linear Transformer, RWKV</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<div class="card-example">
+    <span class="card-title">具体实例</span>
+    <p>用 Performer 处理 64K 长度的基因组序列（DNA 碱基对预测）。</p>
+    <ul>
+        <li>标准 Attention：64K × 64K = 4.2B 元素，FP16 下仅 Attention 矩阵就需 8.4 GB 显存，加上 KV Cache 和模型参数，单卡无法训练。</li>
+        <li>Performer（$m=256$）：中间矩阵仅 $256 \times 64 = 16K$ 元素，显存占用可忽略。在单张 A100 上可训练 128K 序列。</li>
+        <li>精度：在蛋白质结构预测任务上，Performer 的 LDDT 分数达到标准 Transformer 的 97%，但训练速度快 20 倍。</li>
+    </ul>
+</div>
+
+<h4>4.6 🔧 实践踩坑指南</h4>
+
+<div class="card-tip">
+    <span class="card-title">1. 特征维度 $m$ 的选择</span>
+    <ul>
+        <li><strong>$m=64$</strong>：速度最快，但精度损失约 3~5%，适合对速度极度敏感的场景。</li>
+        <li><strong>$m=256$</strong>：推荐默认值，精度损失 < 1%，在大多数 NLP 任务上接近无损。</li>
+        <li><strong>$m=1024$</strong>：精度几乎无损，但速度优势减弱，适合高精度科学计算。</li>
+    </ul>
+</div>
+
+<div class="card-tip">
+    <span class="card-title">2. 因果 Attention 的实现陷阱</span>
+    <ul>
+        <li>标准 Performer 的前向公式 $S = \sum_{j=1}^n \phi(K_j)^T V_j$ 是<strong>双向</strong>的。</li>
+        <li>实现因果（自回归）生成时，必须使用<strong>累积和（Cumulative Sum）</strong>：
+            <div class="math-block">
+                $$ S_i = \sum_{j=1}^i \phi(K_j)^T V_j, \quad Z_i = \sum_{j=1}^i \phi(K_j) $$
+            </div>
+        </li>
+        <li>这导致推理时无法像标准 Attention 那样并行预填充长序列，需要逐 token 更新 $S_i$ 和 $Z_i$。</li>
+    </ul>
+</div>
+
+<div class="card-tip">
+    <span class="card-title">3. 正交随机特征的生成开销</span>
+    <ul>
+        <li>ORF 需要对高斯矩阵做 QR 分解，生成一次 $\Omega$ 的开销约为 $O(m^2 d)$。</li>
+        <li>这个开销在训练前一次性完成，但如果在每个 layer、每个 head 都重新生成，会成为瓶颈。<strong>建议全局复用同一组 $\Omega$。</strong></li>
+    </ul>
+</div>
+
+<div class="code-collapse depth-deep">
+    <div class="code-collapse-header">
+        <span class="code-collapse-title">
+            <span class="lang-badge">PyTorch</span>
+            线性注意力极简实现（随机特征版）
+        </span>
+        <span class="code-collapse-toggle">
+            展开查看 <span class="arrow">▼</span>
+        </span>
+    </div>
+    <div class="code-collapse-body">
+<pre><code>import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import math
+
+class LinearAttention(nn.Module):
+    """
+    极简线性注意力实现（Performer/FAVOR+ 简化版）
+    使用随机傅里叶特征近似 softmax 核
+    复杂度: O(n * m * d)，其中 m 是随机特征维度
+    """
+    def __init__(self, d_model, n_heads, n_features=256, eps=1e-6):
+        super().__init__()
+        self.d_model = d_model
+        self.n_heads = n_heads
+        self.d_head = d_model // n_heads
+        self.n_features = n_features  # m: 随机特征维度
+        self.eps = eps
+
+        self.W_q = nn.Linear(d_model, d_model)
+        self.W_k = nn.Linear(d_model, d_model)
+        self.W_v = nn.Linear(d_model, d_model)
+        self.W_o = nn.Linear(d_model, d_model)
+
+        # 初始化随机投影矩阵 (正交随机特征简化版)
+        # 真实 Performer 使用 QR 分解正交化，这里简化处理
+        omega = torch.randn(self.n_features, self.d_head)
+        self.register_buffer('omega', omega)
+
+    def _phi(self, x):
+        """
+        随机特征映射: phi(x) 近似 softmax 核
+        x: [..., d_head]
+        返回: [..., n_features]
+        """
+        # Performer 的特征映射（简化版，省略正交化）
+        # phi(x) = exp(-||x||^2/2) * [cos(omega*x), sin(omega*x)] / sqrt(m)
+        x_norm_sq = (x ** 2).sum(dim=-1, keepdim=True) / 2  # [..., 1]
+
+        # 计算 omega * x
+        proj = torch.matmul(x, self.omega.T)  # [..., m]
+
+        # cos 和 sin 特征
+        cos_feat = torch.cos(proj - x_norm_sq)
+        sin_feat = torch.sin(proj - x_norm_sq)
+
+        # 拼接并归一化
+        phi = torch.cat([cos_feat, sin_feat], dim=-1) / math.sqrt(self.n_features)
+        # 注意: 简化版，实际 FAVOR+ 有更精确的核函数选择
+        return phi.clamp(min=0)  # 确保非负（使用正随机特征时需要）
+
+    def forward(self, x):
+        """
+        x: [batch, seq_len, d_model]
+        返回: [batch, seq_len, d_model]
+        """
+        B, N, _ = x.shape
+
+        # 1. 投影得到 Q, K, V
+        Q = self.W_q(x).view(B, N, self.n_heads, self.d_head).transpose(1, 2)
+        K = self.W_k(x).view(B, N, self.n_heads, self.d_head).transpose(1, 2)
+        V = self.W_v(x).view(B, N, self.n_heads, self.d_head).transpose(1, 2)
+        # Q, K, V: [B, H, N, d_head]
+
+        # 2. 特征映射: Q -> phi(Q), K -> phi(K)
+        Q_prime = self._phi(Q)  # [B, H, N, m]
+        K_prime = self._phi(K)  # [B, H, N, m]
+
+        # 3. 线性注意力的核心：利用结合律
+        # 标准: softmax(QK^T) V ≈ (phi(Q) phi(K)^T) V
+        # 线性: phi(Q) (phi(K)^T V)  —— 先算后者，避免 n×n 矩阵
+        #
+        # 分子: phi(Q) * (phi(K)^T V) = phi(Q) @ S
+        #   其中 S = sum_j phi(K_j) outer V_j  [m, d]
+        # 分母: phi(Q) * (sum_j phi(K_j)) = phi(Q) @ Z
+        #   其中 Z = sum_j phi(K_j)  [m]
+
+        # 计算累积矩阵 S = sum_j K'_j^T * V_j  (外积求和)
+        # K_prime: [B, H, N, m], V: [B, H, N, d_head]
+        # S: [B, H, m, d_head]
+        S = torch.einsum('bhnm,bhnd->bhmd', K_prime, V)
+
+        # 计算累积向量 Z = sum_j K'_j
+        Z = K_prime.sum(dim=2)  # [B, H, m]
+
+        # 4. 逐 token 计算输出
+        # output_i = (Q'_i @ S) / (Q'_i @ Z + eps)
+        # Q_prime: [B, H, N, m]
+        # S: [B, H, m, d_head] -> Q' @ S: [B, H, N, d_head]
+        numerator = torch.matmul(Q_prime, S)  # [B, H, N, d_head]
+        denominator = torch.matmul(Q_prime, Z.unsqueeze(-1))  # [B, H, N, 1]
+        denominator = denominator + self.eps
+
+        output = numerator / denominator  # [B, H, N, d_head]
+
+        # 5. 合并多头
+        output = output.transpose(1, 2).contiguous().view(B, N, self.d_model)
+        return self.W_o(output)
+
+# ========== 测试 ==========
+if __name__ == "__main__":
+    B, N, d = 2, 2048, 256
+    n_heads, m = 8, 64
+
+    model = LinearAttention(d, n_heads, n_features=m)
+    x = torch.randn(B, N, d)
+    out = model(x)
+    print(f"输入: {x.shape}, 输出: {out.shape}")
+    print(f"随机特征维度 m={m}，序列长度 N={N}")
+    print(f"标准 Attention 中间矩阵: {N}×{N} = {N*N:,} 元素")
+    print(f"线性 Attention 中间矩阵: {m}×{d//n_heads} = {m*(d//n_heads):,} 元素")
+    print(f"压缩比: {N*N / (m * d // n_heads):.1f}x")
+</code></pre>
+    </div>
+</div>
+
+<div class="card-summary">
+    <span class="card-title">💡 一句话理解本章</span>
+    线性注意力用随机特征映射 $\phi$ 将 softmax 核函数化，再利用矩阵结合律将 $O(n^2)$ 的 $QK^T$ 替换为 $O(n)$ 的累积矩阵运算，代价是引入可控的近似误差。
+</div>
+
+<div class="card-check depth-deep">
+    <span class="card-title">🧠 自检一下</span>
+    <ol>
+        <li>为什么标准 Attention 的 softmax 破坏了矩阵结合律？请用公式说明。</li>
+        <li>在线性路径中，$S = \sum_j \phi(K_j)^T V_j$ 的维度是多少？为什么它与序列长度 $n$ 无关？</li>
+        <li>如果 $m$ 设置得和 $n$ 一样大，线性注意力的复杂度会变成什么？这说明了什么？</li>
+    </ol>
+</div>
+
+<hr class="hr-divider">
+
+<h3>第五章：状态空间模型（Mamba）——用"状态压缩"彻底抛弃 Attention</h3>
+
+<h4>5.1 老方案及其问题：RNN 与 Attention 的两难困境</h4>
+
+<p>在 Mamba 之前，序列建模有两个极端：</p>
+<ul>
+    <li><strong>RNN（如 LSTM）</strong>：隐状态 $h_t$ 固定大小（如 256 维），与序列长度无关。推理时只需维护一个 $h_t$，内存 $O(1)$。但训练时无法并行，因为 $h_t$ 依赖 $h_{t-1}$，必须逐时间步计算。</li>
+    <li><strong>Transformer</strong>：训练完全并行，但 Attention 矩阵 $O(n^2)$，推理时 KV Cache $O(n)$。</li>
+</ul>
+
+<p>能否兼得两者之长？状态空间模型（SSM）试图回答这个问题，但早期的 SSM（如 S4, S5）虽然做到了 $O(n)$ 训练，却缺乏<strong>内容依赖的选择性</strong>——即无法根据输入决定哪些信息该记住、哪些该遗忘。</p>
+
+<h4>5.2 新方案核心假设：Mamba 的三重革命</h4>
+
+<p>Mamba（2023）提出了三个相互支撑的假设：</p>
+
+<ol>
+    <li><strong>选择性记忆假设</strong>：不是所有历史信息都同等重要。模型应该根据当前输入，动态决定：
+        <ul>
+            <li>以多大的"步长"（$\Delta$）读取当前输入</li>
+            <li>将输入投影到哪个"方向"（$B$）</li>
+            <li>从哪个"方向"输出（$C$）</li>
+        </ul>
+    </li>
+    <li><strong>结构化矩阵假设</strong>：通过将状态转移矩阵 $A$ 设计为对角化/结构化形式，可以将序列计算转化为卷积或扫描操作，从而实现并行训练。</li>
+    <li><strong>硬件感知假设</strong>：现代 GPU 的 SRAM 速度比 HBM 快一个数量级。通过将状态维度 $N$ 设计得很小（如 16），可以将整个状态放入高速缓存，避免缓慢的内存读写。</li>
+</ol>
+
+<div class="card-metaphor">
+    <span class="card-title">🏙️ 城市隐喻——从全景摄像头到智能门童</span>
+    <ul>
+        <li><strong>标准 Attention（全景摄像头）</strong>：每个时间点，保安室都有全城所有街道的实时画面（$n \times n$ 矩阵）。虽然信息完整，但监控墙太大，城市扩张时保安室装不下。</li>
+        <li><strong>RNN（单页日志）</strong>：保安只有一页笔记本（固定隐状态），每经过一条街就更新笔记。笔记本永远只有一页，但之前的细节会被覆盖或模糊。</li>
+        <li><strong>Mamba（智能门童）</strong>：保安仍然只有一页笔记（固定状态 $N=16$），但他现在有了<strong>选择性记忆</strong>——遇到重要事件（如火灾）时，他会用红笔大字号记录；遇到普通事件（如路人走过）时，他只写一行小字甚至不记。这一页笔记虽然小，但全是精华。</li>
+    </ul>
+</div>
+
+<h4>5.3 数学推导：从连续系统到选择性离散化</h4>
+
+<p><strong>步骤 1：连续时间状态空间模型</strong></p>
+
+<p>经典控制理论中的线性状态空间方程：</p>
+<div class="math-block">
+    $$ \dot{h}(t) = A h(t) + B x(t), \quad y(t) = C h(t) + D x(t) $$
+</div>
+<p>其中 $h(t) \in \mathbb{R}^N$ 是隐状态，$x(t) \in \mathbb{R}$ 是输入，$y(t) \in \mathbb{R}$ 是输出。$A \in \mathbb{R}^{N \times N}$ 是状态转移矩阵，$B, C^T \in \mathbb{R}^N$，$D \in \mathbb{R}$。</p>
+
+<p><strong>步骤 2：离散化——零阶保持（ZOH）</strong></p>
+
+<p>在深度学习场景中，输入是离散的 token 序列 $x_1, x_2, \dots, x_n$。将连续系统以步长 $\Delta$ 离散化：</p>
+<div class="math-block">
+    $$ \bar{A} = e^{\Delta A}, \quad \bar{B} = (\Delta A)^{-1}(e^{\Delta A} - I) \cdot \Delta B \approx \Delta B \quad \text{（当 $\Delta$ 很小时）} $$
+</div>
+
+<p>离散递推公式：</p>
+<div class="math-block">
+    $$ h_k = \bar{A} h_{k-1} + \bar{B} x_k, \quad y_k = C h_k + D x_k $$
+</div>
+
+<div class="card-note">
+    <span class="card-title">🔍 为什么离散化步长 $\Delta$ 如此重要？</span>
+    <p>$\Delta$ 的物理意义是"采样间隔"。</p>
+    <ul>
+        <li><strong>$\Delta$ 很大</strong>：$\bar{A} = e^{\Delta A}$ 中的元素趋近于 0（假设 $A$ 有负实部），意味着旧状态被快速遗忘，模型主要关注当前输入。</li>
+        <li><strong>$\Delta$ 很小</strong>：$\bar{A} \approx I + \Delta A$，旧状态几乎完全保留，模型具有长期记忆。</li>
+    </ul>
+    <p>在 Mamba 之前，$\Delta$ 是全局超参数。Mamba 的革命在于：<strong>让 $\Delta$ 成为输入的函数</strong> $\Delta = \text{softplus}(\text{Linear}(x_k))$，每个 token 决定自己的"记忆节奏"。</p>
+</div>
+
+<p><strong>步骤 3：选择性机制——让 $B, C, \Delta$ 依赖输入</strong></p>
+
+<p>这是 Mamba 与此前所有 SSM 的根本区别：</p>
+<div class="math-block">
+    $$ \Delta_k = \text{softplus}(W_\Delta \cdot x_k), \quad B_k = W_B \cdot x_k, \quad C_k = W_C \cdot x_k $$
+</div>
+
+<p>每个 token $x_k$ 都有自己专属的 $\Delta_k, B_k, C_k$。这意味着：</p>
+<ul>
+    <li><strong>选择性遗忘</strong>：$\bar{A}_k = e^{\Delta_k A}$，对于不重要的 token，$\Delta_k$ 很大，$\bar{A}_k \approx 0$，旧状态被重置。</li>
+    <li><strong>选择性读取</strong>：$B_k$ 决定当前输入 $x_k$ 被投影到状态的哪个方向。</li>
+    <li><strong>选择性输出</strong>：$C_k$ 决定从状态的哪个方向读取输出。</li>
+</ul>
+
+<div class="card-example">
+    <span class="card-title">🔍 手算实例：n=4, N=2 的选择性 SSM 前向过程</span>
+    <p>设状态维度 $N=2$，输入维度为 1（简化），$D=0$。固定 $A = \begin{pmatrix} -1 & 0 \\ 0 & -2 \end{pmatrix}$。</p>
+    <p>输入序列：$x = [1, 2, 3, 4]$。</p>
+    <p>通过线性层生成参数（简化假设）：</p>
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr><th>k</th><th>$x_k$</th><th>$\Delta_k$</th><th>$B_k^T$</th><th>$C_k$</th></tr>
+            </thead>
+            <tbody>
+                <tr><td>1</td><td>1</td><td>0.1</td><td>[0.1, 0.1]</td><td>[1, 1]</td></tr>
+                <tr><td>2</td><td>2</td><td>0.5</td><td>[0.2, 0.2]</td><td>[1, 0]</td></tr>
+                <tr><td>3</td><td>3</td><td>0.1</td><td>[0.3, 0.3]</td><td>[0, 1]</td></tr>
+                <tr><td>4</td><td>4</td><td>0.2</td><td>[0.4, 0.4]</td><td>[1, 1]</td></tr>
+            </tbody>
+        </table>
+    </div>
+    <p><strong>离散化计算</strong>：</p>
+    <p>对于 $k=1$：</p>
+    <div class="math-block">
+        $$ \bar{A}_1 = e^{0.1 \cdot \begin{pmatrix}-1&0\\0&-2\end{pmatrix}} = \begin{pmatrix} e^{-0.1} & 0 \\ 0 & e^{-0.2} \end{pmatrix} \approx \begin{pmatrix} 0.905 & 0 \\ 0 & 0.819 \end{pmatrix} $$
+    </div>
+    <div class="math-block">
+        $$ \bar{B}_1 = \Delta_1 B_1 = 0.1 \cdot [0.1, 0.1]^T = [0.01, 0.01]^T $$
+    </div>
+    <p>初始状态 $h_0 = [0, 0]^T$：</p>
+    <div class="math-block">
+        $$ h_1 = \bar{A}_1 h_0 + \bar{B}_1 x_1 = [0, 0] + [0.01, 0.01] \cdot 1 = [0.01, 0.01] $$
+    </div>
+    <div class="math-block">
+        $$ y_1 = C_1 h_1 = [1, 1] \cdot [0.01, 0.01]^T = 0.02 $$
+    </div>
+    <p>对于 $k=2$（注意 $\Delta_2=0.5$ 较大，意味着更多遗忘）：</p>
+    <div class="math-block">
+        $$ \bar{A}_2 = e^{0.5 \cdot \begin{pmatrix}-1&0\\0&-2\end{pmatrix}} = \begin{pmatrix} e^{-0.5} & 0 \\ 0 & e^{-1.0} \end{pmatrix} \approx \begin{pmatrix} 0.607 & 0 \\ 0 & 0.368 \end{pmatrix} $$
+    </div>
+    <div class="math-block">
+        $$ \bar{B}_2 = 0.5 \cdot [0.2, 0.2]^T = [0.1, 0.1]^T $$
+    </div>
+    <div class="math-block">
+        $$ h_2 = \bar{A}_2 h_1 + \bar{B}_2 x_2 = [0.607 \cdot 0.01, 0.368 \cdot 0.01] + [0.1, 0.1] \cdot 2 = [0.006 + 0.2, 0.004 + 0.2] = [0.206, 0.204] $$
+    </div>
+    <div class="math-block">
+        $$ y_2 = C_2 h_2 = [1, 0] \cdot [0.206, 0.204]^T = 0.206 $$
+    </div>
+    <p><strong>关键观察</strong>：</p>
+    <ul>
+        <li>由于 $\Delta_2=0.5$ 较大，$\bar{A}_2$ 的对角元素较小（0.607 和 0.368），旧状态 $h_1$ 被大幅衰减。</li>
+        <li>如果 $\Delta_2$ 很小（如 0.01），$\bar{A}_2$ 会接近单位矩阵，$h_1$ 几乎完全保留。</li>
+        <li>这就是<strong>选择性</strong>：$\Delta_k$ 由输入 $x_k$ 决定，模型自动学习何时"翻页"、何时"续写"。</li>
+    </ul>
+</div>
+
+<p><strong>步骤 4：并行扫描（Parallel Scan）——训练并行的关键</strong></p>
+
+<p>递推公式 $h_k = \bar{A}_k h_{k-1} + \bar{B}_k x_k$ 看似必须串行计算，但可以通过<strong>关联扫描（Associative Scan）</strong>并行化。</p>
+
+<p>定义二元运算 $\otimes$ 作用于两个元组 $(a, b)$：</p>
+<div class="math-block">
+    $$ (a_2, b_2) \otimes (a_1, b_1) = (a_2 a_1, \; a_2 b_1 + b_2) $$
+</div>
+
+<p>则递推可以表示为前缀积：</p>
+<div class="math-block">
+    $$ h_k = \left( \bigotimes_{j=1}^k (\bar{A}_j, \bar{B}_j x_j) \right)_2 $$
+</div>
+
+<div class="card-note">
+    <span class="card-title">🔍 为什么这个运算是可并行的？</span>
+    <p>运算 $\otimes$ 满足结合律：$((a_3,b_3) \otimes (a_2,b_2)) \otimes (a_1,b_1) = (a_3,b_3) \otimes ((a_2,b_2) \otimes (a_1,b_1))$。</p>
+    <p>验证：</p>
+    <ul>
+        <li>左结合：$((a_3,b_3) \otimes (a_2,b_2)) = (a_3 a_2, a_3 b_2 + b_3)$，再与 $(a_1,b_1)$ 结合得 $(a_3 a_2 a_1, a_3 a_2 b_1 + a_3 b_2 + b_3)$</li>
+        <li>右结合：$(a_2,b_2) \otimes (a_1,b_1) = (a_2 a_1, a_2 b_1 + b_2)$，再与 $(a_3,b_3)$ 结合得 $(a_3 a_2 a_1, a_3(a_2 b_1 + b_2) + b_3) = (a_3 a_2 a_1, a_3 a_2 b_1 + a_3 b_2 + b_3)$</li>
+    </ul>
+    <p>结果相同！因此可以使用并行前缀和算法（Blelloch Scan），在 $O(\log n)$ 深度、$O(n)$ 工作量内完成全部 $h_k$ 的计算。</p>
+</div>
+
+<h4>5.4 训练与推理的具体计算过程</h4>
+
+<p><strong>前向计算（Mamba Block）</strong></p>
+<ol>
+    <li><strong>输入投影</strong>：对输入 $x \in \mathbb{R}^{n \times d}$，通过线性层得到：
+        <ul>
+            <li>$x'$：用于残差连接的复制</li>
+            <li>$x_{ssm}$：进入 SSM 分支的投影</li>
+            <li>$x_{gate}$：用于门控的 SiLU 激活分支</li>
+        </ul>
+    </li>
+    <li><strong>SSM 参数生成</strong>：从 $x_{ssm}$ 通过线性层生成 $\Delta, B, C$：
+        <div class="math-block">
+            $$ \Delta = \text{softplus}(W_\Delta x_{ssm} + b_\Delta), \quad B = W_B x_{ssm}, \quad C = W_C x_{ssm} $$
+        </div>
+    </li>
+    <li><strong>离散化</strong>：对每个位置 $k$，计算 $\bar{A}_k = e^{\Delta_k A}$，$\bar{B}_k = \Delta_k B_k$。</li>
+    <li><strong>并行扫描</strong>：使用 Blelloch Scan 算法在 GPU 上并行计算所有 $h_k$：
+        <div class="math-block">
+            $$ h_k = \bar{A}_k h_{k-1} + \bar{B}_k x_k^{(ssm)} $$
+        </div>
+    </li>
+    <li><strong>输出计算</strong>：$y_k = C_k h_k + D x_k^{(ssm)}$。</li>
+    <li><strong>门控融合</strong>：$\text{output} = \text{SiLU}(x_{gate}) \odot y + \text{残差}$。</li>
+</ol>
+
+<p><strong>后向计算（梯度传播）</strong></p>
+<ol>
+    <li><strong>门控梯度</strong>：通过 SiLU 和逐元素乘法回传。</li>
+    <li><strong>SSM 输出梯度</strong>：$\frac{\partial \mathcal{L}}{\partial y_k}$ 传回。</li>
+    <li><strong>C 和 D 的梯度</strong>：$\frac{\partial \mathcal{L}}{\partial C_k} = \frac{\partial \mathcal{L}}{\partial y_k} h_k^T$，$\frac{\partial \mathcal{L}}{\partial D} = \sum_k \frac{\partial \mathcal{L}}{\partial y_k} x_k^T$。</li>
+    <li><strong>状态梯度（反向扫描）</strong>：从 $k=n$ 到 $k=1$ 反向递推：
+        <div class="math-block">
+            $$ \frac{\partial \mathcal{L}}{\partial h_k} = C_k^T \frac{\partial \mathcal{L}}{\partial y_k} + \bar{A}_{k+1}^T \frac{\partial \mathcal{L}}{\partial h_{k+1}} $$
+        </div>
+        注意：这是反向的递推，与正向扫描方向相反，但同样可以利用并行扫描加速。
+    </li>
+    <li><strong>A, B, $\Delta$ 的梯度</strong>：通过 $\bar{A}_k = e^{\Delta_k A}$ 的导数（涉及矩阵指数求导）回传。</li>
+    <li><strong>输入投影梯度</strong>：通过 $W_\Delta, W_B, W_C$ 回传到 $x_{ssm}$。</li>
+</ol>
+
+<h4>5.5 具体收益与对比</h4>
+
+<div class="table-wrap">
+    <table>
+        <thead>
+            <tr><th>维度</th><th>标准 Transformer</th><th>RNN (LSTM)</th><th>Mamba (SSM)</th></tr>
+        </thead>
+        <tbody>
+            <tr><td>训练并行度</td><td>完全并行</td><td>串行</td><td>并行扫描（$O(\log n)$ 深度）</td></tr>
+            <tr><td>训练时间复杂度</td><td>$O(n^2 d)$</td><td>$O(nd^2)$</td><td>$O(ndN)$（$N$ 为状态维，常数）</td></tr>
+            <tr><td>推理内存</td><td>$O(n)$（KV Cache）</td><td>$O(1)$</td><td>$O(1)$（固定状态 $h_t$）</td></tr>
+            <tr><td>长距离依赖</td><td>直接全连接</td><td>梯度消失/爆炸</td><td>结构化矩阵保证稳定</td></tr>
+            <tr><td>内容选择性</td><td>天然（Q/K 内积）</td><td>无</td><td>输入依赖的 $\Delta, B, C$</td></tr>
+            <tr><td>上下文长度</td><td>~128K（优化后）</td><td>理论上无限</td><td>~1M+（实测）</td></tr>
+            <tr><td>代表模型</td><td>GPT-4, LLaMA</td><td>已淘汰</td><td>Mamba, Jamba, Zamba</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<div class="card-example">
+    <span class="card-title">具体实例</span>
+    <p>用 Mamba 处理 256K 长度的音频波形（语音识别）。</p>
+    <ul>
+        <li>标准 Transformer：256K × 256K Attention 矩阵 = 655 亿元素，约 1.3 TB 显存，完全不可行。</li>
+        <li>Mamba：状态维度 $N=16$，无论序列多长，中间状态始终只有 $n \times d \times N = 256K \times 64 \times 16 = 262M$ 个参数，显存占用约 500 MB。<strong>相差 2500 倍</strong>。</li>
+        <li>效果：在 LibriSpeech 长音频（>10 分钟）上，Mamba 的 WER（词错误率）比截断到 16K 的 Transformer 低 15%，因为模型能记住对话开头的说话人特征，一直用到结尾。</li>
+    </ul>
+</div>
+
+<h4>5.6 🔧 实践踩坑指南</h4>
+
+<div class="card-tip">
+    <span class="card-title">1. 状态维度 $N$ 的选择</span>
+    <ul>
+        <li><strong>$N=16$</strong>：Mamba 论文默认值，速度最快，适合大多数 NLP 任务。</li>
+        <li><strong>$N=64$</strong>：状态容量更大，适合需要记忆大量细节的任务（如代码、结构化数据）。</li>
+        <li><strong>陷阱</strong>：$N$ 不是越大越好。$N$ 增大会线性增加计算量，但收益递减。建议从 16 开始调。</li>
+    </ul>
+</div>
+
+<div class="card-tip">
+    <span class="card-title">2. 矩阵 $A$ 的初始化</span>
+    <ul>
+        <li>Mamba 中 $A$ 通常初始化为对角矩阵，对角线元素为负数（如 -1, -2, ..., -N）。</li>
+        <li>这保证了 $e^{\Delta A}$ 的元素始终 $< 1$，状态不会爆炸。</li>
+        <li><strong>不要随机初始化 $A$</strong>，否则可能导致状态不稳定，训练发散。</li>
+    </ul>
+</div>
+
+<div class="card-tip">
+    <span class="card-title">3. 与 FlashAttention 的兼容性</span>
+    <ul>
+        <li>Mamba <strong>不需要</strong> FlashAttention——它没有 Attention 矩阵。</li>
+        <li>但 Mamba 的并行扫描需要自定义 CUDA Kernel。官方实现了高效的 fused scan kernel，务必使用官方实现而非纯 PyTorch 循环。</li>
+        <li>纯 PyTorch 实现的并行扫描会比标准 Attention 更慢，因为缺少内存访问优化。</li>
+    </ul>
+</div>
+
+<div class="code-collapse depth-deep">
+    <div class="code-collapse-header">
+        <span class="code-collapse-title">
+            <span class="lang-badge">PyTorch</span>
+            Mamba 极简实现（选择性 SSM + 串行扫描）
+        </span>
+        <span class="code-collapse-toggle">
+            展开查看 <span class="arrow">▼</span>
+        </span>
+    </div>
+    <div class="code-collapse-body">
+<pre><code>import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import math
+
+class SimpleMambaBlock(nn.Module):
+    """
+    极简 Mamba Block 实现（教育用途）
+    包含: 选择性 SSM + 门控 + 残差
+    注意: 这是串行版本（逐时间步计算），用于理解原理
+          真实 Mamba 使用并行扫描（Parallel Scan）加速
+    """
+    def __init__(self, d_model, d_state=16, expand=2):
+        super().__init__()
+        self.d_model = d_model
+        self.d_state = d_state  # N: 状态维度
+        self.d_inner = int(d_model * expand)
+
+        # 输入投影: x -> x_ssm + x_gate
+        self.in_proj = nn.Linear(d_model, self.d_inner * 2)
+
+        # SSM 参数生成: x_ssm -> delta, B, C
+        self.delta_proj = nn.Linear(self.d_inner, self.d_inner)
+        self.B_proj = nn.Linear(self.d_inner, self.d_state)
+        self.C_proj = nn.Linear(self.d_inner, self.d_state)
+
+        # 离散化 A: A 初始化为 -1..-N 的对角矩阵
+        # 注意: 这里用对数参数化保证 A 始终为负
+        A = torch.arange(1, d_state + 1, dtype=torch.float32)
+        self.A_log = nn.Parameter(torch.log(A))  # 可学习
+        self.D = nn.Parameter(torch.ones(self.d_inner))  # 直接通路
+
+        # 输出投影
+        self.out_proj = nn.Linear(self.d_inner, d_model)
+
+    def forward(self, x):
+        """
+        x: [batch, seq_len, d_model]
+        返回: [batch, seq_len, d_model]
+        """
+        B, L, _ = x.shape
+        N = self.d_state
+
+        # 1. 输入投影 + 门控
+        xz = self.in_proj(x)  # [B, L, 2*d_inner]
+        x_ssm, x_gate = xz.chunk(2, dim=-1)
+        # x_ssm, x_gate: [B, L, d_inner]
+
+        # 2. 生成选择性参数 delta, B, C
+        delta = F.softplus(self.delta_proj(x_ssm))  # [B, L, d_inner]
+        B = self.B_proj(x_ssm)  # [B, L, N]
+        C = self.C_proj(x_ssm)  # [B, L, N]
+
+        # 3. 离散化 A: A_bar = exp(delta * A)
+        # A = -exp(A_log)  (保证负数)
+        A = -torch.exp(self.A_log)  # [N]
+        # delta: [B, L, d_inner], A: [N]
+        # 广播: A_bar[b, l, i, j] = exp(delta[b,l,i] * A[j])
+        # 简化: 逐通道独立，所以 A_bar_diag = exp(delta * A)
+        A_bar = torch.exp(delta.unsqueeze(-1) * A.unsqueeze(0).unsqueeze(0))
+        # A_bar: [B, L, d_inner, N]  (对角矩阵的对角元素)
+
+        # B_bar = delta * B  (ZOH 简化)
+        B_bar = delta.unsqueeze(-1) * B.unsqueeze(-2)
+        # B_bar: [B, L, d_inner, N]
+
+        # 4. 串行扫描（教育版，真实 Mamba 用并行扫描）
+        # h_t = A_bar_t * h_{t-1} + B_bar_t * x_t
+        # y_t = C_t * h_t + D * x_t
+        h = torch.zeros(B, self.d_inner, N, device=x.device)
+        ys = []
+
+        for t in range(L):
+            # h = A_bar[:, t] * h + B_bar[:, t] * x_ssm[:, t].unsqueeze(-1)
+            h = A_bar[:, t] * h + B_bar[:, t] * x_ssm[:, t].unsqueeze(-1)
+            # y = (C[:, t].unsqueeze(1) * h).sum(dim=-1) + self.D * x_ssm[:, t]
+            y = (C[:, t].unsqueeze(1) * h).sum(dim=-1) + self.D * x_ssm[:, t]
+            ys.append(y)
+
+        y = torch.stack(ys, dim=1)  # [B, L, d_inner]
+
+        # 5. 门控融合 + 输出投影
+        output = y * F.silu(x_gate)
+        output = self.out_proj(output)
+
+        return output
+
+# ========== 测试 ==========
+if __name__ == "__main__":
+    B, L, d = 2, 1024, 256
+    d_state = 16
+
+    model = SimpleMambaBlock(d, d_state=d_state)
+    x = torch.randn(B, L, d)
+    out = model(x)
+    total_params = sum(p.numel() for p in model.parameters())
+
+    print(f"输入: {x.shape}, 输出: {out.shape}")
+    print(f"状态维度 N = {d_state}")
+    print(f"参数量: {total_params:,}")
+    print(f"推理时只需要保存一个隐状态 h: [{B}, {d}, {d_state}] = {B*d*d_state:,} 个元素")
+    print(f"对比 Transformer KV Cache: [{B}, {L}, {d}] = {B*L*d:,} 个元素")
+    print(f"内存优势比(序列长度=1024): {B*L*d / (B*d*d_state):.1f}x")
+    print(f"序列越长优势越大 (线性 vs 常数)")
+</code></pre>
+    </div>
+</div>
+
+<div class="card-summary">
+    <span class="card-title">💡 一句话理解本章</span>
+    Mamba 用固定大小的隐状态（如 16 维）压缩历史信息，通过输入依赖的 $\Delta, B, C$ 实现选择性记忆，再用并行扫描实现 $O(n)$ 训练，彻底抛弃了 Attention 矩阵。
+</div>
+
+<div class="card-check depth-deep">
+    <span class="card-title">🧠 自检一下</span>
+    <ol>
+        <li>为什么 $\Delta_k$ 很大时，旧状态会被快速遗忘？请用 $\bar{A} = e^{\Delta A}$ 的公式解释。</li>
+        <li>并行扫描中的二元运算 $\otimes$ 为什么满足结合律？这有什么工程意义？</li>
+        <li>Mamba 的推理内存是 $O(1)$，这意味着什么？与 Transformer 的 KV Cache 相比有什么优势？</li>
+    </ol>
+</div>
+
+<hr class="hr-divider">
+
+<h2>终章：系统比较与哲学升华</h2>
+
+<h3>一、三大技术路线全面对比</h3>
+
+<div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th>技术</th>
+                <th>核心武器</th>
+                <th>数学本质</th>
+                <th>解决的根本问题</th>
+                <th>扩展能力</th>
+                <th>精度代价</th>
+                <th>代表模型</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>稀疏注意力</strong></td>
+                <td>局部+全局+随机 Mask</td>
+                <td>稀疏图 = 扩展图</td>
+                <td>全连接冗余</td>
+                <td>4K→400K</td>
+                <td>远距离需多跳</td>
+                <td>Longformer, BigBird</td>
+            </tr>
+            <tr>
+                <td><strong>线性注意力</strong></td>
+                <td>核函数 + 矩阵结合律</td>
+                <td>$\phi(Q)(\phi(K)^TV)$</td>
+                <td>Softmax 封锁结合律</td>
+                <td>4K→1M+</td>
+                <td>核近似误差</td>
+                <td>Performer, RWKV</td>
+            </tr>
+            <tr>
+                <td><strong>状态空间模型</strong></td>
+                <td>选择性状态压缩</td>
+                <td>$h_k = \bar{A}_k h_{k-1} + \bar{B}_k x_k$</td>
+                <td>Attention 矩阵存在性</td>
+                <td>256K→10M+</td>
+                <td>状态容量上限</td>
+                <td>Mamba, Jamba</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+
+<h3>二、如何选择？——场景决策树</h3>
+
+<div class="decision-tree">
+你需要处理多长序列？
+├── 4K ~ 32K（中等长度）
+│   └── 直接用标准 Transformer + FlashAttention（最简单，精度最高）
+├── 32K ~ 256K（长文档/代码）
+│   ├── 需要精确远距离依赖？（如法律合同跨页引用）
+│   │   ├── 是 → YaRN / 线性注意力（保留全局连接能力）
+│   │   └── 否 → 稀疏注意力（BigBird，实现简单）
+│   └── 有显存硬约束？
+│       └── 是 → Performer / Linear Attention（O(n) 显存）
+├── 256K ~ 1M+（超长序列）
+│   ├── 需要自回归生成？（如长文本续写）
+│   │   ├── 是 → Mamba（O(1) 推理内存，无限生成）
+│   │   └── 否 → 线性 Attention + 分块（如 RWKV）
+│   └── 任务以局部模式为主？（如 DNA、音频）
+│       └── 是 → Mamba（局部结构天然适配 SSM）
+└── 不确定 / 通用场景
+    └── 混合架构（Jamba = Transformer + Mamba 层间交替）
+</div>
+
+<h3>三、贯穿始终的三重境界（哲学总结）</h3>
+
+<ol>
+    <li><strong>第一重（标准 Attention）</strong>：每个人都和所有人握手——信息最完整，但成本最高。（瓶颈：$n^2$ 爆炸）</li>
+    <li><strong>第二重（稀疏/线性 Attention）</strong>：只和邻居握手，或通过中介间接联系——用结构化的"偷懒"降低成本。（瓶颈：近似误差或远距离衰减）</li>
+    <li><strong>第三重（Mamba）</strong>：不再握手，而是各自写一本日记——每个人只记录自己认为重要的信息，通过日记内容的相似性间接关联。（瓶颈：日记本容量有限）</li>
+</ol>
+
+<div class="card-summary" style="border-left-color:#8b5cf6;background:#f5f3ff;">
+    <p style="font-size:1.1rem;font-weight:500;">从 $O(n^2)$ 到 $O(n)$ 再到 $O(1)$ 推理内存，长序列建模的本质是人类对"信息交互方式"的持续反思——<strong>最优雅的解决方案，有时不是让交互更高效，而是质疑"是否必须交互"。</strong></p>
+</div>
+
+<h3>四、延伸阅读：更多技术路线</h3>
+
+<p>本文深入剖析了三条主流路线，但 O(n²) 诅咒的解法远不止这些：</p>
+
+<ul>
+    <li><strong>FlashAttention（系列）</strong>：不改变 $O(n^2)$ 的算法复杂度，但通过分块和 SRAM 复用，将实际可处理长度提升 4~8 倍。是"硬件感知优化"的典范。</li>
+    <li><strong>MQA / GQA（Multi-Query / Grouped-Query Attention）</strong>：不降低 Attention 复杂度，但通过共享 KV 头，将 KV Cache 内存减少 8~16 倍。是推理优化的关键。</li>
+    <li><strong>RetNet</strong>：微软提出的替代方案，用保留机制（Retention）替代 Attention，兼具并行训练和 $O(1)$ 推理内存。</li>
+    <li><strong>Ring Attention</strong>：通过跨设备的环形通信，将超长序列分片到多个 GPU 上计算，从系统层面突破单卡显存限制。</li>
+</ul>
+
+<hr class="hr-divider">
+
+<div class="card-check" style="border-left-color:#0f172a;background:#f8fafc;">
+    <span class="card-title">🧠 最后的思考</span>
+    <ol>
+        <li>如果你要做一个实时长音频转写产品（1 小时+），你会选择哪条技术路线？为什么？</li>
+        <li>Mamba 的"选择性遗忘"与人类的"注意力机制"有什么异同？</li>
+        <li>如果未来的模型需要处理 1B token（整互联网），你认为当前的哪条路线最有潜力？还需要什么突破？</li>
+    </ol>
+</div>
+
+<hr class="hr-divider">
+
+<div style="text-align:center;color:#94a3b8;font-size:0.85rem;padding:20px 0 8px;">
+    — 全文完 —
+</div>
+
+</div>
+<script>
+// ========== 阅读模式切换 ==========
+function setReadingMode(mode) {
+    document.body.className = 'mode-' + mode;
+    document.querySelectorAll('.reading-mode-tab').forEach(function(tab) {
+        tab.classList.toggle('active', tab.dataset.mode === mode);
+    });
+    try { localStorage.setItem('readingMode', mode); } catch(e) {}
+}
+// 读取保存的偏好
+(function() {
+    try {
+        var saved = localStorage.getItem('readingMode');
+        if (saved) setReadingMode(saved);
+    } catch(e) {}
+})();
+
+// ========== 阅读进度条 ==========
+function updateProgress() {
+    var scrollTop = window.scrollY || document.documentElement.scrollTop;
+    var docHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;
+    var progress = docHeight > 0 ? (scrollTop / docHeight) * 100 : 0;
+    document.getElementById('progressBar').style.width = progress + '%';
+}
+window.addEventListener('scroll', updateProgress, { passive: true });
+window.addEventListener('load', updateProgress);
+
+// ========== O(n²) 计算器 ==========
+(function() {
+    var slider = document.getElementById('seqLenSlider');
+    var valueEl = document.getElementById('seqLenValue');
+    var transMem = document.getElementById('transMem');
+    var transOps = document.getElementById('transOps');
+    var sparseMem = document.getElementById('sparseMem');
+    var sparseOps = document.getElementById('sparseOps');
+    var mambaMem = document.getElementById('mambaMem');
+    var mambaOps = document.getElementById('mambaOps');
+
+    // 序列长度预设（K为单位，slider值1-20对应指数增长）
+    var seqLengths = [
+        128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536,
+        131072, 262144, 524288, 1048576, 2097152, 4194304, 8388608, 16777216, 33554432, 67108864
+    ];
+    var labels = [
+        '128', '256', '512', '1K', '2K', '4K', '8K', '16K', '32K', '64K',
+        '128K', '256K', '512K', '1M', '2M', '4M', '8M', '16M', '32M', '64M'
+    ];
+
+    var d_head = 64; // 每个头的维度
+    var window_size = 512; // 稀疏注意力窗口大小
+    var N_state = 16; // Mamba状态维度
+
+    function formatBytes(bytes) {
+        if (bytes < 1024) return bytes.toFixed(1) + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        if (bytes < 1024 * 1024 * 1024 * 1024) return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
+        return (bytes / (1024 * 1024 * 1024 * 1024)).toFixed(1) + ' TB';
+    }
+
+    function formatOps(ops) {
+        if (ops < 1000) return ops.toFixed(0) + ' 次';
+        if (ops < 1000000) return (ops / 1000).toFixed(1) + 'K 次';
+        if (ops < 1000000000) return (ops / 1000000).toFixed(1) + 'M 次';
+        if (ops < 1000000000000) return (ops / 1000000000).toFixed(1) + 'B 次';
+        return (ops / 1000000000000).toFixed(1) + 'T 次';
+    }
+
+    function updateCalc() {
+        var idx = parseInt(slider.value) - 1;
+        var n = seqLengths[idx];
+        var label = labels[idx];
+        valueEl.textContent = label;
+
+        // 标准 Transformer: QK^T 矩阵 n*n * 2 bytes (FP16)
+        var trans_mem = n * n * 2;
+        var trans_ops = n * n * d_head * 2; // QK^T + AV
+
+        // 稀疏注意力: 每个token关注window_size个邻居
+        var sparse_mem = n * window_size * 2;
+        var sparse_ops = n * window_size * d_head * 2;
+
+        // Mamba: 状态大小 n*d*N, 这里按一个头计算
+        var mamba_mem = n * d_head * N_state * 2;
+        var mamba_ops = n * d_head * N_state * 4; // 粗略估计
+
+        transMem.textContent = formatBytes(trans_mem);
+        transOps.textContent = formatOps(trans_ops);
+        sparseMem.textContent = formatBytes(sparse_mem);
+        sparseOps.textContent = formatOps(sparse_ops);
+        mambaMem.textContent = formatBytes(mamba_mem);
+        mambaOps.textContent = formatOps(mamba_ops);
+    }
+
+    slider.addEventListener('input', updateCalc);
+    updateCalc();
+})();
+
+// ========== 可折叠代码块 ==========
+document.addEventListener('click', function(e) {
+    var header = e.target.closest('.code-collapse-header');
+    if (header) {
+        var collapse = header.closest('.code-collapse');
+        collapse.classList.toggle('open');
+    }
+});
+</script>
+
+</body>
+</html>
